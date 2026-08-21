@@ -9,6 +9,7 @@
 #include "weft/model.hpp"
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
+#include "weft/independent_mesh.hpp"
 #include "weft/io/system.hpp"
 #include "weft/recipe.hpp"
 #include "weft/topology_signature.hpp"
@@ -107,6 +108,8 @@ void usage() {
         "    --profile cad     CAD profile: sparse minimal flats + adaptive\n"
         "                      curvature; round holes still take ring/plate\n"
         "                      collars ('dense' restores grid flats)\n"
+        "    --independent   MOI-style tessellation + planar n-gons (this fork;\n"
+        "                      skips the legacy density-contract generate())\n"
         "    --adaptive        curvature-driven border counts (the CAD profile;\n"
         "                      big arcs get more segments, straights get 1)\n"
         "    --min-curve N     lower floor on adaptive counts for closed curved\n"
@@ -374,6 +377,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             validate = true;  // signature needs ValidationReport
         }
         else if (a == "--stitch") gs.decoupleSeams = true;  // experiment
+        else if (a == "--independent") gs.independentMesh = true;
         else if (a == "--debug") weft::setGenerateDebugLog(stderr);
         else if (a == "--no-normals") noNormals = true;
         else if (a == "--triangulate") objOpts.triangulate = true;
@@ -495,7 +499,10 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
             };
             scaleSet(scaled.defaults);
             for (auto& [fid, fs] : scaled.perFace) scaleSet(fs);
-            weft::PolyMesh lod = weft::generate(model, analysis, scaled);
+            weft::PolyMesh lod =
+                scaled.independentMesh
+                    ? weft::meshIndependent(model, analysis, scaled)
+                    : weft::generate(model, analysis, scaled);
             weft::applyOps(lod, model, recipe.ops);
             size_t dot = output.rfind('.');
             std::string lodPath =
@@ -516,7 +523,14 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     }
 
     weft::GenerationReport report;
-    weft::PolyMesh mesh = weft::generate(model, analysis, gs, &report);
+    const auto meshBegin = std::chrono::steady_clock::now();
+    weft::PolyMesh mesh =
+        gs.independentMesh
+            ? weft::meshIndependent(model, analysis, gs, &report)
+            : weft::generate(model, analysis, gs, &report);
+    const auto meshMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - meshBegin)
+                            .count();
     weft::applyOps(mesh, model, recipe.ops);
     if (!output.empty()) {
         exportMesh(mesh, output);
@@ -527,6 +541,9 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
     std::printf("  %zu vertices, %zu polygons (%zu quads, %zu tris, %zu n-gons)\n",
                 mesh.vertexCount(), mesh.polygonCount(), mesh.countQuads(),
                 mesh.countTris(), mesh.countNgons());
+    std::printf("  %s: %lld ms\n",
+                gs.independentMesh ? "meshIndependent" : "generate",
+                static_cast<long long>(meshMs));
     {
         const auto folded = weft::foldedPolys(model, mesh);
         size_t nf = 0;
@@ -592,7 +609,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         if (why.empty()) std::printf("  no traced demotions\n");
         else std::printf("%s", why.c_str());
     }
-    {
+    if (!gs.independentMesh) {
         // Density-matched edge counts, ownership tags, and proposal/pin/
         // floor conflicts (WP2 attribution — topology unchanged).
         const std::string density = weft::formatDensityOwnership(report);

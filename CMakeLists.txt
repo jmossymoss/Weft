@@ -8,6 +8,10 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+if(MSVC)
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
+endif()
+
 # On Windows the executables need the OCCT DLLs next to them; gather all
 # targets into one bin/ directory so the build script can deploy the DLLs
 # once and everything runs from anywhere (build/bin/Release/*.exe).

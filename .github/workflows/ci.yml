@@ -1,5 +1,7 @@
-# Primary correctness gate is Linux. Windows CI still runs for signal but is
-# non-blocking while Linux remains the merge bar.
+# Linux remains the merge bar (full generate() pipeline + corpus).
+# Windows must compile and pass this fork's independent-mesh path.
+# Legacy generate() steps on Windows stay non-blocking: they fail on
+# vcpkg OCCT the same way they fail on main.
 name: ci
 
 on:
@@ -51,10 +53,10 @@ jobs:
         run: tools/release_gate.sh
 
   windows:
-    # Run in parallel with linux so a Linux test red does not skip the
-    # Windows compile/runtime signal (local Windows builds still need the
-    # vendored OCCT third-party DLLs under third_party/occt-win-runtime).
-    continue-on-error: true
+    # Linux remains the merge bar. This job must compile and pass the
+    # independent-mesh tests. Legacy generate() pipeline/corpus/release
+    # steps stay non-blocking: they fail on Windows vcpkg OCCT the same
+    # way they fail on main (not this fork's product path).
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,13 +89,53 @@ jobs:
             if (-not (Test-Path "$dst/$n")) { throw "Required DLL missing after deploy: $n" }
           }
           Write-Host "Vendored OCCT runtimes deployed next to Release binaries"
-      - name: Pipeline tests
+      - name: Independent mesh and unit tests
         shell: pwsh
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: |
+          ctest --test-dir build -C Release --output-on-failure `
+            -R "independent_mesh|bake_queue|topology_cache|geometry_pool"
+      - name: Independent mesh CLI smoke
+        shell: pwsh
+        run: |
+          $weft = "build/bin/Release/weft.exe"
+          $step = Join-Path $env:TEMP "weft_win_cyl.step"
+          $obj = Join-Path $env:TEMP "weft_win_cyl.obj"
+          & $weft fixture $step --shape cylinder
+          if ($LASTEXITCODE -ne 0) { throw "fixture failed: $LASTEXITCODE" }
+          & $weft mesh $step -o $obj --independent --validate
+          if ($LASTEXITCODE -ne 0) { throw "independent mesh CLI smoke failed: $LASTEXITCODE" }
+      - name: Pipeline tests (legacy generate)
+        continue-on-error: true
+        shell: pwsh
+        run: ctest --test-dir build -C Release -R pipeline --output-on-failure
       - name: Coverage report
         shell: bash
         run: tools/coverage_report.sh
+      - name: Independent mesh signature determinism
+        shell: pwsh
+        run: |
+          $weft = "build/bin/Release/weft.exe"
+          $step = Join-Path $env:TEMP "weft_win_sig.step"
+          $a = Join-Path $env:TEMP "weft_win_sig_a.sig"
+          $b = Join-Path $env:TEMP "weft_win_sig_b.sig"
+          $oa = Join-Path $env:TEMP "weft_win_sig_a.obj"
+          $ob = Join-Path $env:TEMP "weft_win_sig_b.obj"
+          & $weft fixture $step --shape cylinder
+          if ($LASTEXITCODE -ne 0) { throw "fixture failed: $LASTEXITCODE" }
+          & $weft mesh $step -o $oa --independent --validate --signature $a
+          if ($LASTEXITCODE -ne 0) { throw "independent mesh a failed: $LASTEXITCODE" }
+          & $weft mesh $step -o $ob --independent --validate --signature $b
+          if ($LASTEXITCODE -ne 0) { throw "independent mesh b failed: $LASTEXITCODE" }
+          & $weft signature-compare $a $b
+          if ($LASTEXITCODE -ne 0) { throw "independent signatures not policy-equal: $LASTEXITCODE" }
+      - name: Topology signature self-check (legacy generate)
+        continue-on-error: true
+        shell: bash
+        run: |
+          WEFT=build/bin/Release/weft.exe \
+            tools/topology_signature.sh self-check
       - name: Corpus invariants
+        continue-on-error: true
         shell: bash
         run: |
           WEFT=build/bin/Release/weft.exe \
@@ -105,6 +147,7 @@ jobs:
           WEFT=build/bin/Release/weft.exe \
             tools/public_corpus_gate.sh
       - name: Strict release gate
+        continue-on-error: true
         shell: bash
         run: |
           WEFT=build/bin/Release/weft.exe \
@@ -116,6 +159,7 @@ jobs:
           name: topology-signatures-linux
           path: build/topology_signatures-linux
       - name: Topology signature release set (Windows) + compare
+        continue-on-error: true
         shell: bash
         run: |
           WEFT=build/bin/Release/weft.exe

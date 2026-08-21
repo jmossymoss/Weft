@@ -3,7 +3,8 @@ if(MSVC)
   add_compile_options(/Zi)
   # OCCT on Windows pulls windows.h; without NOMINMAX the min/max macros
   # shatter std::min<T>/std::max<T> (MSVC: "type 'char' unexpected").
-  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+  # _USE_MATH_DEFINES exposes M_PI from <cmath>.
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
 endif()
 
 add_library(weft_core
@@ -15,6 +16,7 @@ add_library(weft_core
   src/preprocess.cpp
   src/mesh.cpp
   src/meshers.cpp
+  src/independent_mesh.cpp
   src/mesher_sampling.cpp
   src/mesher_trace.cpp
   src/mesher_utils.cpp

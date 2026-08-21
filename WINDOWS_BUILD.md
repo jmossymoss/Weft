@@ -21,11 +21,16 @@
    - Set `OCCT_DIR` environment variable or tell CMake where it is
    - Re-run the script
 
-3. **Try the demo**:
+3. **Try the demo** (this fork's production path is `--independent`):
+   ```cmd
+   independent.bat
+   independent.bat cli mesh demo.step -o demo.obj --validate
+   ```
+   Or the raw CLI:
    ```cmd
    build\bin\Release\weft.exe fixture demo.step --shape demo
    build\bin\Release\weft.exe inspect demo.step
-   build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12 --axial 3
+   build\bin\Release\weft.exe mesh demo.step -o demo.obj --independent --validate
    ```
 
 ## Fast iteration (`dev.bat`)
@@ -38,6 +43,8 @@ change. Once `build.bat` has succeeded at least once, use `dev.bat` instead:
 dev.bat            REM build + run weft_app (incremental, no other checks)
 dev.bat tests      REM build + run weft_tests
 dev.bat cli mesh demo.step -o demo.obj --radial 12
+independent.bat    REM GUI on independent tessellation
+independent.bat cli mesh demo.step -o demo.obj --validate
 dev.bat build      REM compile everything, run nothing
 dev.bat -d app     REM Debug config: compiles faster, runs slower
 ```
@@ -60,9 +67,13 @@ cmake -B build -DOCCT_SEARCH_PATH=C:\OCCT
 REM Build
 cmake --build build --config Release -j
 
-REM Test
-ctest --test-dir build --output-on-failure
+REM Independent-mesh tests (this fork's Windows gate)
+ctest --test-dir build -C Release --output-on-failure -R "independent_mesh|bake_queue|topology_cache|geometry_pool"
 ```
+
+Full `ctest -R pipeline` still exercises legacy `weft::generate()`. Those
+asserts fail on Windows vcpkg OCCT the same way they fail on `main`; they
+are not this fork's merge bar.
 
 ## Prerequisites
 
@@ -166,8 +177,15 @@ executables, so they run from any prompt or double-click with no PATH setup:
 - Generate a demo model:
   `build\bin\Release\weft.exe fixture demo.step --shape demo`
 - Inspect the B-rep: `build\bin\Release\weft.exe inspect demo.step`
-- Generate topology:
+- Mesh with independent tessellation (this fork's production path):
+  `independent.bat` (GUI) or
+  `independent.bat cli mesh demo.step -o demo.obj --validate`
+- Raw CLI:
+  `build\bin\Release\weft.exe mesh demo.step -o demo.obj --independent --validate`
+- Default `weft mesh` still uses the legacy solver:
   `build\bin\Release\weft.exe mesh demo.step -o demo.obj --radial 12 --axial 3`
+- Independent-mesh tests:
+  `ctest --test-dir build -C Release --output-on-failure -R "independent_mesh|bake_queue|topology_cache|geometry_pool"`
 - Open the OBJ in Blender; each B-rep face arrives as a named group
 
 See [README.md](README.md) for product usage and

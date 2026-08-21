@@ -2,10 +2,11 @@
 
 This document explains corpus mechanics. Product scope, release models, public
 datasets, and completion gates are defined only in
-[`docs/EXECUTION_PLAN.md`](../docs/EXECUTION_PLAN.md). Corpus runners mesh
-through CLI `weft mesh` → `weft::generate()`; see
-[`docs/PRODUCTION_PATH.md`](../docs/PRODUCTION_PATH.md) for the shared
-production path and stitch quarantine.
+[`docs/EXECUTION_PLAN.md`](../docs/EXECUTION_PLAN.md). Default corpus
+runners still mesh through CLI `weft mesh` → `weft::generate()` so
+legacy goldens stay comparable. The independent tessellation path is
+opt-in (`weft mesh --independent`, `weft::meshIndependent()`); see
+[`docs/PRODUCTION_PATH.md`](../docs/PRODUCTION_PATH.md).
 
 ## Corpus layers
 

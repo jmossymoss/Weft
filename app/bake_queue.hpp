@@ -1,9 +1,10 @@
 // Per-face bake queue for weft_app (Phase 1).
 //
-// Scheduling layer only: the single worker always calls weft::generate()
-// with a frozen GenerationSettings snapshot (AD-1). Face ids drive
-// fidelity overlays and latest-wins dedupe so rapid artist edits do not
-// stack stale full regenerates.
+// Scheduling layer only: the single worker calls weft::generate() or
+// weft::meshIndependent() from a frozen GenerationSettings snapshot
+// (independentMesh selects the fork path). Face ids drive fidelity
+// overlays and latest-wins dedupe so rapid artist edits do not stack
+// stale full regenerates.
 //
 #pragma once
 
@@ -29,7 +30,7 @@ namespace weft_app {
 enum class FaceFidelity : uint8_t {
     LowPolyProxy = 0,  // showing last stable mesh / proxy while dirty
     Queued,            // pending bake with newer params
-    Baking,            // worker is running generate() that includes this face
+    Baking,            // worker is remeshing (includes this face)
     HighFidelity,      // last adopt landed for this face
 };
 

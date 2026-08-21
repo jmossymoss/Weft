@@ -4,7 +4,7 @@
 // B-rep with feature colouring, click faces to select, drag density controls
 // and watch the topology regenerate live. Orbit/pan/zoom like Blender.
 //
-//   weft_app [model.step] [--fixture demo] [--screenshot out.png] [--finalize]
+//   weft_app [model.step] [--independent] [--fixture demo] [--screenshot out.png] [--finalize]
 //   weft_app model.step --finalize --screenshot-objects <dir>
 
 // windows.h + commdlg.h must come FIRST: OCCT's headers include windows.h
@@ -47,6 +47,7 @@
 #include "weft/export_fbx.hpp"
 #include "weft/export_gltf.hpp"
 #include "weft/fixture.hpp"
+#include "weft/independent_mesh.hpp"
 #include "weft/mesh.hpp"
 #include "weft/meshers.hpp"
 #include "weft/model.hpp"
@@ -624,8 +625,10 @@ struct App {
     weft::PolyMesh mesh;
     weft::GenerationReport report;
     weft::GenerationCache genCache;  // per-face reuse across regenerates
+    // Session flag: --independent / Topology checkbox. Not stored in recipes.
+    bool sessionIndependentMesh = false;
     // Per-face bake queue (Phase 1): single worker, latest-wins dedupe,
-    // full-mesh adopt. Always calls weft::generate() (AD-1).
+    // full-mesh adopt. generate() or meshIndependent() from settings.
     weft_app::FaceBakeQueue bakeQueue;
     std::vector<weft::EdgePolyline> brepEdges;
 
@@ -1315,11 +1318,16 @@ static void updateProblems(App& app) {
     if (lines.empty()) app.problems.count = 0;
 }
 
+static void applyIndependentSession(App& app) {
+    app.recipe.settings.independentMesh = app.sessionIndependentMesh;
+}
+
 static void finishGenerate(App& app);
 
 // Snapshot recipe → bake queue. faceId 0 = model-wide (load / defaults).
 static void enqueueBake(App& app, uint32_t faceId) {
     if (!app.hasModel) return;
+    applyIndependentSession(app);
     weft::GenerationSettings s = app.recipe.settings;
     s.finalizeMesh = app.forceFinalize || app.liveLink;
     app.bakeQueue.enqueue(faceId, s, app.recipe.ops);
@@ -1334,7 +1342,8 @@ static void enqueueBake(App& app, uint32_t faceId) {
 // inside the queue; further edits coalesce via latest-wins pending overwrite.
 static void startGenerate(App& app) {
     if (!app.hasModel) return;
-    logLine("regenerate: begin (%zu overrides, %zu edge pins, %zu ops)",
+    logLine("regenerate: begin (%s, %zu overrides, %zu edge pins, %zu ops)",
+            app.sessionIndependentMesh ? "meshIndependent" : "generate",
             app.recipe.settings.perFace.size(),
             app.recipe.settings.perEdge.size(), app.recipe.ops.size());
     app.genError.clear();
@@ -1642,6 +1651,7 @@ static void finishLoadModel(App& app) {
                 app.status = std::string("recipe load failed: ") + e.what();
             }
         }
+        applyIndependentSession(app);
         // Start once, after a sidecar recipe has replaced the defaults. This
         // avoids generating the same large model twice during open.
         if (app.loadGenerateAfter) startGenerate(app);
@@ -1723,6 +1733,7 @@ static void reloadModel(App& app) {
         app.model = std::move(fresh);
         app.analysis = std::move(freshAnalysis);
         app.recipe = std::move(remapped);
+        applyIndependentSession(app);
         app.bakeQueue.bind(&app.model, &app.analysis, &app.genCache);
 
         auto mapSet = [](std::set<int>& ids, const std::map<int, int>& m) {
@@ -1988,10 +1999,14 @@ static weft::PolyMesh finalizedMeshForExport(App& app) {
     settings.finalizeMesh = true;
     settings.progressFaces = nullptr;
     settings.progressTotal = nullptr;
+    applyIndependentSession(app);
+    settings.independentMesh = app.sessionIndependentMesh;
     weft::GenerationReport report;
     weft::PolyMesh mesh =
-        weft::generate(app.model, app.analysis, settings, &report,
-                       &app.genCache);
+        settings.independentMesh
+            ? weft::meshIndependent(app.model, app.analysis, settings, &report)
+            : weft::generate(app.model, app.analysis, settings, &report,
+                             &app.genCache);
     weft::applyOps(mesh, app.model, app.recipe.ops);
     return mesh;
 }
@@ -5066,6 +5081,26 @@ static void drawUi(App& app) {
                     app.mesh.polygonCount());
         ImGui::Text("%zu quads  %zu tris  %zu n-gons", app.mesh.countQuads(),
                     app.mesh.countTris(), app.mesh.countNgons());
+        bool independent = app.sessionIndependentMesh;
+        if (ImGui::Checkbox("independent tessellation", &independent)) {
+            app.sessionIndependentMesh = independent;
+            applyIndependentSession(app);
+            glfwSetWindowTitle(
+                glfwGetCurrentContext(),
+                independent ? "weft — independent tessellation"
+                            : "weft — b-rep retopology");
+            markDirty(app);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "This fork's product path: meshIndependent()\n"
+                "(angle + chord, planar n-gons, spatial weld).\n"
+                "Off = legacy generate(). Not saved in recipes.\n"
+                "Start with independent.bat or --independent.");
+        }
+        ImGui::TextDisabled("%s",
+                            app.sessionIndependentMesh ? "path: meshIndependent"
+                                                       : "path: generate");
         if (!app.meshFinalized) {
             ImGui::TextDisabled(
                 "interactive preview - seam repair runs on export");
@@ -5417,6 +5452,7 @@ static void drawUi(App& app) {
             if (ImGui::Button("Load recipe")) {
                 try {
                     app.recipe = weft::loadRecipe(app.recipeBuf);
+                    applyIndependentSession(app);
                     markDirty(app);
                     app.status = std::string("loaded ") + app.recipeBuf;
                 } catch (const std::exception& e) {
@@ -5514,6 +5550,7 @@ int main(int argc, char** argv) {
     bool startProxy = false;
     float startYaw = 0.9f, startPitch = 0.5f;
     bool demoLoopCut = false, startStitch = false, startFinalize = false;
+    bool startIndependent = false;
     std::vector<std::pair<int, std::string>> startFaceOverrides;  // FID:spec
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -5528,6 +5565,7 @@ int main(int argc, char** argv) {
         else if (a == "--pitch" && i + 1 < argc) startPitch = std::stof(argv[++i]);
         else if (a == "--loopcut") demoLoopCut = true;  // screenshot testing
         else if (a == "--stitch") startStitch = true;   // screenshot testing
+        else if (a == "--independent") startIndependent = true;
         else if (a == "--finalize") startFinalize = true;  // visual QA = export mesh
         else if (a == "--quality") startQuality = true;
         else if (a == "--matcap") startMatcap = true;
@@ -5631,6 +5669,11 @@ int main(int argc, char** argv) {
     GLuint proxyProg = makeProgram(kProxyVS, kProxyFS);
 
     App app;
+    app.sessionIndependentMesh = startIndependent;
+    applyIndependentSession(app);
+    if (startIndependent) {
+        glfwSetWindowTitle(window, "weft — independent tessellation");
+    }
     app.bakeQueue.start();
     // Model/analysis rebound on each successful load.
     app.livePath = gDataDir + "/weft_live.obj";
@@ -5658,12 +5701,14 @@ int main(int argc, char** argv) {
     }
     if (startFinalize || !screenshotObjectsDir.empty())
         app.forceFinalize = true;
-    if ((startStitch || startFinalize || !screenshotObjectsDir.empty()) &&
+    if ((startStitch || startIndependent || startFinalize ||
+         !screenshotObjectsDir.empty()) &&
         app.hasModel) {
         // After the load (which resets the recipe): apply screenshot
         // experiment flags and rebuild synchronously so the capture shows
         // the intended mesh (finalize = production export path).
         if (startStitch) app.recipe.settings.decoupleSeams = true;
+        applyIndependentSession(app);
         regenerate(app);
     }
     app.cam.yaw = startYaw;
@@ -6393,6 +6438,7 @@ int main(int argc, char** argv) {
         if ((startupLoadPending || startupApplyPending) && app.hasModel &&
             !app.loadBusy) {
             if (startStitch) app.recipe.settings.decoupleSeams = true;
+            applyIndependentSession(app);
             for (const auto& [fid, spec] : startFaceOverrides) {
                 weft::FaceMeshSettings s = app.recipe.settings.defaults;
                 weft::applySettingsList(s, spec);
