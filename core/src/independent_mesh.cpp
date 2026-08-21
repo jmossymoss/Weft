@@ -531,7 +531,8 @@ bool uvDelaunayFill(const std::vector<gp_Pnt2d>& outerUv,
                     const std::vector<uint32_t>& outerIdx,
                     const std::vector<std::vector<gp_Pnt2d>>& holeUv,
                     const std::vector<std::vector<uint32_t>>& holeIdx,
-                    bool flip, int faceId, PolyMesh& mesh) {
+                    bool flip, int faceId, const TopoDS_Face& cadFace,
+                    PolyMesh& mesh) {
     if (outerUv.size() < 3 || outerUv.size() != outerIdx.size()) return false;
     if (holeUv.size() != holeIdx.size()) return false;
     double span = 0;
@@ -593,11 +594,22 @@ bool uvDelaunayFill(const std::vector<gp_Pnt2d>& outerUv,
         }
         if (tri.IsNull() || tri->NbTriangles() < 1) return false;
         std::vector<uint32_t> nodeVert(size_t(tri->NbNodes()) + 1, UINT32_MAX);
+        BRepAdaptor_Surface cad(cadFace);
         for (int n = 1; n <= tri->NbNodes(); ++n) {
             const gp_Pnt p = tri->Node(n);
             auto it = vertByUv.find(keyOf(p.X(), p.Y()));
-            if (it == vertByUv.end()) return false;
-            nodeVert[size_t(n)] = it->second;
+            if (it != vertByUv.end()) {
+                nodeVert[size_t(n)] = it->second;
+                continue;
+            }
+            try {
+                const gp_Pnt p3 = cad.Value(p.X(), p.Y());
+                nodeVert[size_t(n)] = uint32_t(mesh.vertices.size());
+                mesh.vertices.push_back({p3.X(), p3.Y(), p3.Z()});
+                mesh.anchors.push_back({faceId, p.X(), p.Y()});
+            } catch (const Standard_Failure&) {
+                return false;
+            }
         }
         const size_t before = mesh.polygonCount();
         std::vector<std::array<uint32_t, 3>> tris;
@@ -761,10 +773,10 @@ bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
     }
 
     const bool flip = face.Orientation() == TopAbs_REVERSED;
-    if (!holes.empty()) {
+    {
         const size_t pDelaunay = mesh.polygonCount();
         if (uvDelaunayFill(outer.uv, outerIdx, holeUvs, holeIdxes, flip,
-                           faceId, mesh) &&
+                           faceId, face, mesh) &&
             mesh.polygonCount() > pDelaunay) {
             return true;
         }
@@ -848,8 +860,7 @@ bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
     }
 
     std::vector<std::array<uint32_t, 3>> tris;
-    const bool force = holes.empty();
-    if (!earClipUv(ringUv, ringIdx, tris, force) || tris.empty()) {
+    if (!earClipUv(ringUv, ringIdx, tris, /*force=*/false) || tris.empty()) {
         rollback();
         return false;
     }
