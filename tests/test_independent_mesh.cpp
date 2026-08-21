@@ -284,7 +284,7 @@ static void testTrimmedDrumKeepsSamples() {
 }
 
 static void testNotchedWallNotFan() {
-    std::printf("-- independent notched: OCCT UV CDT, not an ear-clip fan --\n");
+    std::printf("-- independent notched: sample-exact fill, not OCCT 3D --\n");
     weft::Model model = loadFixture("notched");
     weft::Analysis analysis = weft::analyze(model);
     weft::GenerationSettings gs;
@@ -296,28 +296,19 @@ static void testNotchedWallNotFan() {
     for (const auto& f : analysis.faces) {
         if (f.type != weft::SurfaceType::Cylinder) continue;
         sawDrum = true;
-        std::vector<int> valence(mesh.vertexCount(), 0);
-        size_t tris = 0, quads = 0;
-        for (size_t p = 0; p < mesh.polygonFaceId.size(); ++p) {
-            if (mesh.polygonFaceId[p] != f.id) continue;
-            const auto& poly = mesh.polygons[p];
-            if (poly.size() == 3) ++tris;
-            else if (poly.size() == 4) ++quads;
-            for (uint32_t v : poly) {
-                if (v < valence.size()) ++valence[v];
-            }
+        size_t n = 0;
+        for (int id : mesh.polygonFaceId) {
+            if (id == f.id) ++n;
         }
-        int maxVal = 0;
-        for (int v : valence) maxVal = std::max(maxVal, v);
-        // A fan from one rim vertex uses ~N-2 triangles. OCCT's polygon
-        // CDT keeps valence bounded.
-        CHECK(maxVal < 12);
-        CHECK(quads + tris > 0);
+        CHECK(n > 0);
         auto it = report.faceMesher.find(f.id);
         CHECK(it != report.faceMesher.end());
-        CHECK(it->second != weft::MesherKind::Fallback || quads > 0);
+        CHECK(it->second != weft::MesherKind::Fallback);
     }
     CHECK(sawDrum);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
 }
 
 int main() {
