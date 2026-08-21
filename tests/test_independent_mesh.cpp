@@ -127,6 +127,39 @@ static void testHoleKeepsRim() {
         sawPlate = true;
     }
     CHECK(sawPlate);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+}
+
+static void testFilletWatertight() {
+    std::printf("-- independent fillet: blend + flats stay closed --\n");
+    weft::Model model = loadFixture("fillet");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs);
+    CHECK(mesh.polygonCount() > 0);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+}
+
+static void testSphereClosed() {
+    std::printf("-- independent sphere: not empty, closed --\n");
+    weft::Model model = loadFixture("sphere");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    gs.defaults.radial = 16;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs);
+    CHECK(mesh.polygonCount() > 0);
+    CHECK(mesh.vertexCount() > 0);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
 }
 
 static void testDrumSpanIsLocal() {
@@ -158,6 +191,8 @@ int main() {
     testBoxNgons();
     testCylinderCaps();
     testHoleKeepsRim();
+    testFilletWatertight();
+    testSphereClosed();
     testDrumSpanIsLocal();
     if (gFails) {
         std::fprintf(stderr, "%d FAILURE(S)\n", gFails);

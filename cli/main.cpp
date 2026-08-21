@@ -609,7 +609,7 @@ int cmdMesh(const std::vector<std::string>& args, bool validateOnly = false) {
         if (why.empty()) std::printf("  no traced demotions\n");
         else std::printf("%s", why.c_str());
     }
-    {
+    if (!gs.independentMesh) {
         // Density-matched edge counts, ownership tags, and proposal/pin/
         // floor conflicts (WP2 attribution — topology unchanged).
         const std::string density = weft::formatDensityOwnership(report);

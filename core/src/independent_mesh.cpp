@@ -11,6 +11,8 @@
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <Geom2d_Curve.hxx>
+#include <Geom_Surface.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <GeomAdaptor_Curve.hxx>
@@ -30,6 +32,7 @@
 #include <gp_Pnt2d.hxx>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -162,33 +165,383 @@ void appendPolygon(PolyMesh& mesh, int faceId, const TopoDS_Face& face,
     mesh.polygonFaceId.push_back(faceId);
 }
 
-bool meshPlanarNgon(const TopoDS_Face& face, int faceId, const Model& model,
-                    const std::vector<std::vector<gp_Pnt>>& samples,
-                    PolyMesh& mesh) {
-    if (!isPlanarFace(face)) return false;
-    if (wireCount(face) != 1) return false;
-    TopoDS_Wire outer = BRepTools::OuterWire(face);
-    if (outer.IsNull()) return false;
+std::vector<gp_Pnt> orientedEdgeSamples(
+    const TopoDS_Edge& e, const Model& model,
+    const std::vector<std::vector<gp_Pnt>>& samples) {
+    const int eid = model.edges.FindIndex(e);
+    std::vector<gp_Pnt> samp;
+    if (eid >= 1 && eid < int(samples.size()) && !samples[eid].empty()) {
+        samp = samples[eid];
+    } else {
+        samp = sampleEdgeForward(e, 1);
+    }
+    if (e.Orientation() == TopAbs_REVERSED) {
+        std::reverse(samp.begin(), samp.end());
+    }
+    return samp;
+}
+
+std::vector<gp_Pnt> collectWireLoop(const TopoDS_Wire& wire,
+                                    const TopoDS_Face& face,
+                                    const Model& model,
+                                    const std::vector<std::vector<gp_Pnt>>& samples) {
     std::vector<gp_Pnt> loop;
-    for (BRepTools_WireExplorer ex(outer, face); ex.More(); ex.Next()) {
-        const TopoDS_Edge e = ex.Current();
-        const int eid = model.edges.FindIndex(e);
-        std::vector<gp_Pnt> samp;
-        if (eid >= 1 && eid < int(samples.size()) && !samples[eid].empty()) {
-            samp = samples[eid];
-        } else {
-            samp = sampleEdgeForward(e, 1);
-        }
-        if (e.Orientation() == TopAbs_REVERSED) {
-            std::reverse(samp.begin(), samp.end());
-        }
+    for (BRepTools_WireExplorer ex(wire, face); ex.More(); ex.Next()) {
+        std::vector<gp_Pnt> samp = orientedEdgeSamples(ex.Current(), model, samples);
         if (samp.size() < 2) continue;
         const size_t start = loop.empty() ? 0 : 1;
         for (size_t i = start; i < samp.size(); ++i) loop.push_back(samp[i]);
     }
+    if (loop.size() >= 2 && loop.front().SquareDistance(loop.back()) < 1e-16) {
+        loop.pop_back();
+    }
+    return loop;
+}
+
+gp_Pnt2d unwrapUv(gp_Pnt2d uv, const gp_Pnt2d& prev,
+                  const BRepAdaptor_Surface& surf) {
+    auto wrap = [](double x, double pref, bool periodic, double period) {
+        if (!periodic || !(period > 0.0)) return x;
+        while (x - pref > 0.5 * period) x -= period;
+        while (pref - x > 0.5 * period) x += period;
+        return x;
+    };
+    uv.SetX(wrap(uv.X(), prev.X(), surf.IsUPeriodic(), surf.UPeriod()));
+    uv.SetY(wrap(uv.Y(), prev.Y(), surf.IsVPeriodic(), surf.VPeriod()));
+    return uv;
+}
+
+gp_Pnt2d uvOnFace(const TopoDS_Face& face, const gp_Pnt& p) {
+    try {
+        Handle(Geom_Surface) gs = BRep_Tool::Surface(face);
+        if (gs.IsNull()) return gp_Pnt2d(0, 0);
+        ShapeAnalysis_Surface sas(gs);
+        return sas.ValueOfUV(p, 1e-6);
+    } catch (const Standard_Failure&) {
+        return gp_Pnt2d(0, 0);
+    }
+}
+
+struct SampleLoop {
+    std::vector<gp_Pnt> p3;
+    std::vector<gp_Pnt2d> uv;
+};
+
+SampleLoop collectWireLoopUv(const TopoDS_Wire& wire, const TopoDS_Face& face,
+                             const Model& model,
+                             const std::vector<std::vector<gp_Pnt>>& samples) {
+    SampleLoop loop;
+    BRepAdaptor_Surface surf(face);
+    for (BRepTools_WireExplorer ex(wire, face); ex.More(); ex.Next()) {
+        const TopoDS_Edge e = ex.Current();
+        std::vector<gp_Pnt> p3 = orientedEdgeSamples(e, model, samples);
+        std::vector<gp_Pnt2d> uv;
+        double f2 = 0, l2 = 0;
+        Handle(Geom2d_Curve) pc;
+        try {
+            pc = BRep_Tool::CurveOnSurface(e, face, f2, l2);
+        } catch (const Standard_Failure&) {
+            pc.Nullify();
+        }
+        const bool degenerated = BRep_Tool::Degenerated(e);
+        if (degenerated) {
+            TopoDS_Vertex v1, v2;
+            TopExp::Vertices(e, v1, v2);
+            gp_Pnt pole(0, 0, 0);
+            if (!v1.IsNull()) pole = BRep_Tool::Pnt(v1);
+            else if (!v2.IsNull()) pole = BRep_Tool::Pnt(v2);
+            int n = std::max(1, int(p3.size()) - 1);
+            if (n < 8 && !pc.IsNull() && l2 > f2) n = 8;
+            p3.clear();
+            uv.clear();
+            p3.reserve(size_t(n) + 1);
+            uv.reserve(size_t(n) + 1);
+            for (int i = 0; i <= n; ++i) {
+                p3.push_back(pole);
+                if (!pc.IsNull() && l2 > f2) {
+                    const double t = f2 + (l2 - f2) * (double(i) / double(n));
+                    uv.push_back(pc->Value(t));
+                } else {
+                    uv.push_back(uvOnFace(face, pole));
+                }
+            }
+            if (e.Orientation() == TopAbs_REVERSED) {
+                std::reverse(uv.begin(), uv.end());
+            }
+        } else if (!pc.IsNull() && l2 > f2 && p3.size() >= 2) {
+            const int n = int(p3.size()) - 1;
+            uv.reserve(p3.size());
+            for (int i = 0; i <= n; ++i) {
+                const double t = f2 + (l2 - f2) * (double(i) / double(n));
+                uv.push_back(pc->Value(t));
+            }
+            if (e.Orientation() == TopAbs_REVERSED) {
+                std::reverse(uv.begin(), uv.end());
+            }
+        } else {
+            uv.reserve(p3.size());
+            for (const gp_Pnt& p : p3) uv.push_back(uvOnFace(face, p));
+        }
+        if (p3.size() < 2 || uv.size() != p3.size()) continue;
+        const size_t start = loop.p3.empty() ? 0 : 1;
+        for (size_t i = start; i < p3.size(); ++i) {
+            gp_Pnt2d uvi = uv[i];
+            if (!loop.uv.empty()) uvi = unwrapUv(uvi, loop.uv.back(), surf);
+            else if (i > 0) uvi = unwrapUv(uvi, uv[i - 1], surf);
+            if (!loop.p3.empty() &&
+                loop.p3.back().SquareDistance(p3[i]) < 1e-16 &&
+                loop.uv.back().SquareDistance(uvi) < 1e-16) {
+                continue;
+            }
+            loop.p3.push_back(p3[i]);
+            loop.uv.push_back(uvi);
+        }
+    }
+    if (loop.p3.size() >= 2 &&
+        loop.p3.front().SquareDistance(loop.p3.back()) < 1e-16 &&
+        loop.uv.front().SquareDistance(loop.uv.back()) < 1e-16) {
+        loop.p3.pop_back();
+        loop.uv.pop_back();
+    }
+    return loop;
+}
+
+double uvSignedArea(const std::vector<gp_Pnt2d>& uv) {
+    double a = 0;
+    const size_t n = uv.size();
+    for (size_t i = 0; i < n; ++i) {
+        const gp_Pnt2d& p = uv[i];
+        const gp_Pnt2d& q = uv[(i + 1) % n];
+        a += p.X() * q.Y() - q.X() * p.Y();
+    }
+    return 0.5 * a;
+}
+
+void reverseLoop(SampleLoop& loop) {
+    std::reverse(loop.p3.begin(), loop.p3.end());
+    std::reverse(loop.uv.begin(), loop.uv.end());
+}
+
+int uvWinding(const std::vector<gp_Pnt2d>& loop, double u, double v) {
+    int w = 0;
+    const size_t n = loop.size();
+    for (size_t i = 0; i < n; ++i) {
+        const gp_Pnt2d& a = loop[i];
+        const gp_Pnt2d& b = loop[(i + 1) % n];
+        if (a.Y() <= v) {
+            if (b.Y() > v) {
+                const double c =
+                    (b.X() - a.X()) * (v - a.Y()) - (u - a.X()) * (b.Y() - a.Y());
+                if (c > 0) ++w;
+            }
+        } else if (b.Y() <= v) {
+            const double c =
+                (b.X() - a.X()) * (v - a.Y()) - (u - a.X()) * (b.Y() - a.Y());
+            if (c < 0) --w;
+        }
+    }
+    return w;
+}
+
+double uvCross(const gp_Pnt2d& o, const gp_Pnt2d& a, const gp_Pnt2d& b) {
+    return (a.X() - o.X()) * (b.Y() - o.Y()) - (a.Y() - o.Y()) * (b.X() - o.X());
+}
+
+bool earClipUv(const std::vector<gp_Pnt2d>& uv, const std::vector<uint32_t>& idx,
+               std::vector<std::array<uint32_t, 3>>& tris) {
+    const size_t n = uv.size();
+    tris.clear();
+    if (n < 3 || idx.size() != n) return false;
+    double span = 0;
+    for (const gp_Pnt2d& p : uv) {
+        span = std::max({span, std::abs(p.X()), std::abs(p.Y())});
+    }
+    const double eps = 1e-12 * std::max(1.0, span * span);
+    std::vector<size_t> ring(n);
+    for (size_t i = 0; i < n; ++i) ring[i] = i;
+    auto insideTri = [&](size_t a, size_t b, size_t c, size_t p) {
+        return uvCross(uv[a], uv[b], uv[p]) > eps &&
+               uvCross(uv[b], uv[c], uv[p]) > eps &&
+               uvCross(uv[c], uv[a], uv[p]) > eps;
+    };
+    size_t guard = 3 * n * n + 16;
+    while (ring.size() > 3 && guard-- > 0) {
+        size_t bestK = ring.size();
+        double bestQ = -1.0;
+        for (size_t k = 0; k < ring.size(); ++k) {
+            const size_t ip = ring[(k + ring.size() - 1) % ring.size()];
+            const size_t ic = ring[k];
+            const size_t in = ring[(k + 1) % ring.size()];
+            const double a2 = uvCross(uv[ip], uv[ic], uv[in]);
+            if (a2 <= eps) continue;
+            const double d2ab = uv[ip].SquareDistance(uv[ic]);
+            const double d2bc = uv[ic].SquareDistance(uv[in]);
+            const double d2ca = uv[in].SquareDistance(uv[ip]);
+            const double s = d2ab + d2bc + d2ca;
+            const double q = s > 1e-300 ? a2 / s : 0.0;
+            if (q <= bestQ) continue;
+            bool blocked = false;
+            for (size_t other : ring) {
+                if (other == ip || other == ic || other == in) continue;
+                if (uv[other].SquareDistance(uv[ip]) < eps ||
+                    uv[other].SquareDistance(uv[ic]) < eps ||
+                    uv[other].SquareDistance(uv[in]) < eps) {
+                    continue;
+                }
+                if (insideTri(ip, ic, in, other)) {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) continue;
+            bestK = k;
+            bestQ = q;
+        }
+        if (bestK >= ring.size()) {
+            tris.clear();
+            return false;
+        }
+        const size_t ip = ring[(bestK + ring.size() - 1) % ring.size()];
+        const size_t ic = ring[bestK];
+        const size_t in = ring[(bestK + 1) % ring.size()];
+        tris.push_back({idx[ip], idx[ic], idx[in]});
+        ring.erase(ring.begin() + long(bestK));
+    }
+    if (ring.size() != 3) {
+        tris.clear();
+        return false;
+    }
+    tris.push_back({idx[ring[0]], idx[ring[1]], idx[ring[2]]});
+    return true;
+}
+
+bool pointInUvTri(const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c,
+                  const gp_Pnt2d& p, double eps) {
+    const double c0 = uvCross(a, b, p);
+    const double c1 = uvCross(b, c, p);
+    const double c2 = uvCross(c, a, p);
+    const bool pos = c0 >= -eps && c1 >= -eps && c2 >= -eps;
+    const bool neg = c0 <= eps && c1 <= eps && c2 <= eps;
+    return pos || neg;
+}
+
+gp_Pnt2d uvOfMeshVert(const PolyMesh& mesh, uint32_t i) {
+    const Anchor& a = mesh.anchors[i];
+    return gp_Pnt2d(a.u, a.v);
+}
+
+void insertUvPoint(PolyMesh& mesh, int faceId, BRepAdaptor_Surface& surf,
+                   const gp_Pnt2d& p, std::vector<std::array<uint32_t, 3>>& tris) {
+    const double eps = 1e-18;
+    int hit = -1;
+    for (int t = 0; t < int(tris.size()); ++t) {
+        const auto& tri = tris[size_t(t)];
+        if (pointInUvTri(uvOfMeshVert(mesh, tri[0]), uvOfMeshVert(mesh, tri[1]),
+                         uvOfMeshVert(mesh, tri[2]), p, eps)) {
+            hit = t;
+            break;
+        }
+    }
+    if (hit < 0) return;
+    const auto tri = tris[size_t(hit)];
+    for (int k = 0; k < 3; ++k) {
+        if (uvOfMeshVert(mesh, tri[size_t(k)]).SquareDistance(p) < 1e-16) return;
+    }
+    gp_Pnt p3;
+    try {
+        p3 = surf.Value(p.X(), p.Y());
+    } catch (const Standard_Failure&) {
+        return;
+    }
+    const uint32_t vi = uint32_t(mesh.vertices.size());
+    mesh.vertices.push_back({p3.X(), p3.Y(), p3.Z()});
+    mesh.anchors.push_back({faceId, p.X(), p.Y()});
+    tris[size_t(hit)] = {vi, tri[0], tri[1]};
+    tris.push_back({vi, tri[1], tri[2]});
+    tris.push_back({vi, tri[2], tri[0]});
+}
+
+void emitUvTris(PolyMesh& mesh, int faceId, bool flip,
+                const std::vector<std::array<uint32_t, 3>>& tris) {
+    for (const auto& t : tris) {
+        if (t[0] == t[1] || t[1] == t[2] || t[2] == t[0]) continue;
+        if (flip) mesh.polygons.push_back({t[0], t[2], t[1]});
+        else mesh.polygons.push_back({t[0], t[1], t[2]});
+        mesh.polygonFaceId.push_back(faceId);
+    }
+}
+
+std::vector<uint32_t> emitVerts(PolyMesh& mesh, int faceId,
+                                const TopoDS_Face& face,
+                                const std::vector<gp_Pnt>& pts) {
+    std::vector<uint32_t> idx;
+    idx.reserve(pts.size());
+    for (const gp_Pnt& p : pts) {
+        idx.push_back(uint32_t(mesh.vertices.size()));
+        mesh.vertices.push_back({p.X(), p.Y(), p.Z()});
+        mesh.anchors.push_back(projectAnchor(face, faceId, p));
+    }
+    return idx;
+}
+
+bool meshSampledPlanar(const TopoDS_Face& face, int faceId, const Model& model,
+                       const std::vector<std::vector<gp_Pnt>>& samples,
+                       PolyMesh& mesh) {
+    if (!isPlanarFace(face)) return false;
+    TopoDS_Wire outerW = BRepTools::OuterWire(face);
+    if (outerW.IsNull()) return false;
+    std::vector<gp_Pnt> outer = collectWireLoop(outerW, face, model, samples);
+    if (outer.size() < 3) return false;
+    std::vector<std::vector<gp_Pnt>> holes;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        const TopoDS_Wire w = TopoDS::Wire(wx.Current());
+        if (w.IsSame(outerW)) continue;
+        std::vector<gp_Pnt> hole = collectWireLoop(w, face, model, samples);
+        if (hole.size() >= 3) holes.push_back(std::move(hole));
+    }
     const size_t before = mesh.polygonCount();
-    appendPolygon(mesh, faceId, face, std::move(loop), false);
-    return mesh.polygonCount() > before;
+    if (holes.empty()) {
+        appendPolygon(mesh, faceId, face, std::move(outer), false);
+        return mesh.polygonCount() > before;
+    }
+    // Keyhole n-gon: one polygon, holes bridged with repeated indices so
+    // weld does not collapse the bore.
+    std::vector<uint32_t> outerIdx = emitVerts(mesh, faceId, face, outer);
+    std::vector<uint32_t> poly = outerIdx;
+    for (const auto& hole : holes) {
+        std::vector<uint32_t> holeIdx = emitVerts(mesh, faceId, face, hole);
+        double best = 1e300;
+        size_t oi = 0, hi = 0;
+        for (size_t i = 0; i < outerIdx.size(); ++i) {
+            const auto& A = mesh.vertices[outerIdx[i]];
+            for (size_t j = 0; j < holeIdx.size(); ++j) {
+                const auto& B = mesh.vertices[holeIdx[j]];
+                const double dx = A[0] - B[0], dy = A[1] - B[1],
+                             dz = A[2] - B[2];
+                const double d = dx * dx + dy * dy + dz * dz;
+                if (d < best) {
+                    best = d;
+                    oi = i;
+                    hi = j;
+                }
+            }
+        }
+        std::vector<uint32_t> next;
+        next.reserve(poly.size() + holeIdx.size() + 2);
+        for (size_t i = 0; i <= oi; ++i) next.push_back(poly[i]);
+        for (size_t k = 0; k < holeIdx.size(); ++k) {
+            next.push_back(holeIdx[(hi + k) % holeIdx.size()]);
+        }
+        next.push_back(holeIdx[hi]);
+        next.push_back(poly[oi]);
+        for (size_t i = oi + 1; i < poly.size(); ++i) next.push_back(poly[i]);
+        poly = std::move(next);
+        outerIdx = poly;
+    }
+    if (poly.size() < 3) return false;
+    mesh.polygons.push_back(std::move(poly));
+    mesh.polygonFaceId.push_back(faceId);
+    return true;
 }
 
 gp_Pnt nearestSample(const gp_Pnt& p,
@@ -206,13 +559,172 @@ gp_Pnt nearestSample(const gp_Pnt& p,
     return best;
 }
 
+bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
+                const Model& model,
+                const std::vector<std::vector<gp_Pnt>>& samples,
+                PolyMesh& mesh) {
+    (void)s;
+    TopoDS_Wire outerW = BRepTools::OuterWire(face);
+    if (outerW.IsNull()) return false;
+    SampleLoop outer = collectWireLoopUv(outerW, face, model, samples);
+    if (outer.p3.size() < 3) return false;
+    std::vector<SampleLoop> holes;
+    for (TopExp_Explorer wx(face, TopAbs_WIRE); wx.More(); wx.Next()) {
+        const TopoDS_Wire w = TopoDS::Wire(wx.Current());
+        if (w.IsSame(outerW)) continue;
+        SampleLoop hole = collectWireLoopUv(w, face, model, samples);
+        if (hole.p3.size() >= 3) holes.push_back(std::move(hole));
+    }
+    if (uvSignedArea(outer.uv) < 0) reverseLoop(outer);
+    for (SampleLoop& hole : holes) {
+        if (uvSignedArea(hole.uv) > 0) reverseLoop(hole);
+    }
+
+    const size_t v0 = mesh.vertices.size();
+    const size_t a0 = mesh.anchors.size();
+    const size_t p0 = mesh.polygonCount();
+    auto rollback = [&] {
+        mesh.vertices.resize(v0);
+        mesh.anchors.resize(a0);
+        mesh.polygons.resize(p0);
+        mesh.polygonFaceId.resize(p0);
+    };
+
+    std::vector<uint32_t> outerIdx = emitVerts(mesh, faceId, face, outer.p3);
+    for (size_t i = 0; i < outerIdx.size() && i < outer.uv.size(); ++i) {
+        mesh.anchors[outerIdx[i]].u = outer.uv[i].X();
+        mesh.anchors[outerIdx[i]].v = outer.uv[i].Y();
+    }
+    std::vector<uint32_t> ringIdx = outerIdx;
+    std::vector<gp_Pnt2d> ringUv = outer.uv;
+    for (const SampleLoop& hole : holes) {
+        std::vector<uint32_t> holeIdx = emitVerts(mesh, faceId, face, hole.p3);
+        for (size_t i = 0; i < holeIdx.size() && i < hole.uv.size(); ++i) {
+            mesh.anchors[holeIdx[i]].u = hole.uv[i].X();
+            mesh.anchors[holeIdx[i]].v = hole.uv[i].Y();
+        }
+        double best = 1e300;
+        size_t oi = 0, hi = 0;
+        for (size_t i = 0; i < ringUv.size(); ++i) {
+            for (size_t j = 0; j < hole.uv.size(); ++j) {
+                const double d = ringUv[i].SquareDistance(hole.uv[j]);
+                if (d < best) {
+                    best = d;
+                    oi = i;
+                    hi = j;
+                }
+            }
+        }
+        std::vector<uint32_t> nextIdx;
+        std::vector<gp_Pnt2d> nextUv;
+        nextIdx.reserve(ringIdx.size() + holeIdx.size() + 2);
+        nextUv.reserve(nextIdx.capacity());
+        for (size_t i = 0; i <= oi; ++i) {
+            nextIdx.push_back(ringIdx[i]);
+            nextUv.push_back(ringUv[i]);
+        }
+        for (size_t k = 0; k < holeIdx.size(); ++k) {
+            const size_t j = (hi + k) % holeIdx.size();
+            nextIdx.push_back(holeIdx[j]);
+            nextUv.push_back(hole.uv[j]);
+        }
+        nextIdx.push_back(holeIdx[hi]);
+        nextUv.push_back(hole.uv[hi]);
+        nextIdx.push_back(ringIdx[oi]);
+        nextUv.push_back(ringUv[oi]);
+        for (size_t i = oi + 1; i < ringIdx.size(); ++i) {
+            nextIdx.push_back(ringIdx[i]);
+            nextUv.push_back(ringUv[i]);
+        }
+        ringIdx = std::move(nextIdx);
+        ringUv = std::move(nextUv);
+    }
+    if (ringIdx.size() < 3) {
+        rollback();
+        return false;
+    }
+
+    std::vector<std::array<uint32_t, 3>> tris;
+    if (!earClipUv(ringUv, ringIdx, tris)) {
+        if (!holes.empty()) {
+            rollback();
+            return false;
+        }
+        tris.clear();
+        for (size_t k = 1; k + 1 < ringIdx.size(); ++k) {
+            tris.push_back({ringIdx[0], ringIdx[k], ringIdx[k + 1]});
+        }
+        if (tris.empty()) {
+            rollback();
+            return false;
+        }
+    }
+
+    BRepAdaptor_Surface surf(face);
+    double uMin = 1e300, uMax = -1e300, vMin = 1e300, vMax = -1e300;
+    std::vector<double> edgeLen;
+    edgeLen.reserve(ringUv.size());
+    for (size_t i = 0; i < ringUv.size(); ++i) {
+        uMin = std::min(uMin, ringUv[i].X());
+        uMax = std::max(uMax, ringUv[i].X());
+        vMin = std::min(vMin, ringUv[i].Y());
+        vMax = std::max(vMax, ringUv[i].Y());
+        edgeLen.push_back(std::sqrt(
+            ringUv[i].SquareDistance(ringUv[(i + 1) % ringUv.size()])));
+    }
+    double step = 0;
+    if (!edgeLen.empty()) {
+        std::nth_element(edgeLen.begin(),
+                         edgeLen.begin() + long(edgeLen.size() / 2),
+                         edgeLen.end());
+        step = edgeLen[edgeLen.size() / 2];
+    }
+    const double area = std::abs(uvSignedArea(ringUv));
+    double peri = 0;
+    for (double l : edgeLen) peri += l;
+    const double thickness = peri > 1e-18 ? 2.0 * area / peri : 0.0;
+    if (step > 1e-18 && thickness > 1.5 * step) {
+        int nu = std::clamp(int(std::floor((uMax - uMin) / step) - 1.0), 0, 48);
+        int nv = std::clamp(int(std::floor((vMax - vMin) / step) - 1.0), 0, 48);
+        std::vector<gp_Pnt2d> outerUv = outer.uv;
+        auto insideFace = [&](double u, double v) {
+            if (uvWinding(outerUv, u, v) == 0) return false;
+            for (const SampleLoop& hole : holes) {
+                if (uvWinding(hole.uv, u, v) != 0) return false;
+            }
+            return true;
+        };
+        for (int j = 1; j <= nv; ++j) {
+            const double v = vMin + (vMax - vMin) * (double(j) / double(nv + 1));
+            for (int i = 1; i <= nu; ++i) {
+                const double u =
+                    uMin + (uMax - uMin) * (double(i) / double(nu + 1));
+                if (!insideFace(u, v)) continue;
+                insertUvPoint(mesh, faceId, surf, gp_Pnt2d(u, v), tris);
+            }
+        }
+    }
+
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    emitUvTris(mesh, faceId, flip, tris);
+    if (mesh.polygonCount() == p0) {
+        rollback();
+        return false;
+    }
+    return true;
+}
+
 bool meshDrumGrid(const TopoDS_Face& face, int faceId,
                   const FaceMeshSettings& s, const std::vector<int>& edgeN,
-                  const Model& model, PolyMesh& mesh) {
+                  const Model& model,
+                  const std::vector<std::vector<gp_Pnt>>& samples,
+                  PolyMesh& mesh) {
+    if (wireCount(face) != 1) return false;
     BRepAdaptor_Surface surf(face);
     const GeomAbs_SurfaceType ty = surf.GetType();
     if (ty != GeomAbs_Cylinder && ty != GeomAbs_Cone &&
-        ty != GeomAbs_SurfaceOfRevolution && ty != GeomAbs_Torus) {
+        ty != GeomAbs_SurfaceOfRevolution && ty != GeomAbs_Torus &&
+        ty != GeomAbs_Sphere) {
         return false;
     }
     int nu = std::max(3, s.radial);
@@ -223,6 +735,9 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
         if (edgeIsClosedCurve(edge)) nu = std::max(nu, edgeN[eid]);
         else if (edgeIsLine(edge)) nv = std::max(nv, edgeN[eid]);
+    }
+    if (ty == GeomAbs_Sphere) {
+        nv = std::max(nv, std::max(4, nu / 2));
     }
     double u0 = 0, u1 = 1, v0 = 0, v1 = 1;
     BRepTools::UVBounds(face, u0, u1, v0, v1);
@@ -255,6 +770,39 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
             mesh.anchors.push_back({faceId, u, v});
         }
     }
+    std::vector<gp_Pnt> rim;
+    double rimSpace = 1e300;
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+        const int eid = model.edges.FindIndex(edge);
+        if (eid < 1 || eid >= int(samples.size())) continue;
+        if (!edgeIsClosedCurve(edge) && !edgeIsLine(edge)) {
+            // keep both; rims are usually closed
+        }
+        const auto& pts = samples[eid];
+        for (size_t k = 0; k < pts.size(); ++k) {
+            rim.push_back(pts[k]);
+            if (k > 0) rimSpace = std::min(rimSpace, pts[k - 1].Distance(pts[k]));
+        }
+    }
+    const double snap = (rimSpace < 1e299) ? 0.45 * rimSpace : 0.0;
+    if (snap > 0.0 && !rim.empty()) {
+        for (int j = 0; j < rows; ++j) {
+            for (int i = 0; i < cols; ++i) {
+                const bool border = (j == 0 || j == rows - 1 || i == 0 ||
+                                     i == cols - 1);
+                if (!border) continue;
+                const uint32_t vi = idx[size_t(j) * size_t(cols) + size_t(i)];
+                gp_Pnt p(mesh.vertices[vi][0], mesh.vertices[vi][1],
+                         mesh.vertices[vi][2]);
+                double dist = 0;
+                const gp_Pnt q = nearestSample(p, rim, dist);
+                if (dist <= snap) {
+                    mesh.vertices[vi] = {q.X(), q.Y(), q.Z()};
+                }
+            }
+        }
+    }
     auto at = [&](int i, int j) -> uint32_t {
         if (uWrap) i = (i + nU) % nU;
         if (vWrap) j = (j + nV) % nV;
@@ -269,6 +817,113 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
             uint32_t b = at(i + 1, j);
             uint32_t c = at(i + 1, j + 1);
             uint32_t d = at(i, j + 1);
+            if (flip) mesh.polygons.push_back({a, d, c, b});
+            else mesh.polygons.push_back({a, b, c, d});
+            mesh.polygonFaceId.push_back(faceId);
+        }
+    }
+    return mesh.polygonCount() > before;
+}
+
+bool meshTransfinite4(const TopoDS_Face& face, int faceId, const Model& model,
+                      const std::vector<std::vector<gp_Pnt>>& samples,
+                      PolyMesh& mesh) {
+    if (wireCount(face) != 1) return false;
+    TopoDS_Wire outer = BRepTools::OuterWire(face);
+    if (outer.IsNull()) return false;
+    std::vector<std::vector<gp_Pnt>> sides;
+    for (BRepTools_WireExplorer ex(outer, face); ex.More(); ex.Next()) {
+        std::vector<gp_Pnt> samp =
+            orientedEdgeSamples(ex.Current(), model, samples);
+        if (samp.size() < 2) continue;
+        sides.push_back(std::move(samp));
+    }
+    if (sides.size() != 4) return false;
+    if (sides[0].size() != sides[2].size() ||
+        sides[1].size() != sides[3].size()) {
+        return false;
+    }
+    auto same3 = [](const gp_Pnt& a, const gp_Pnt& b) {
+        return a.SquareDistance(b) < 1e-16;
+    };
+    const gp_Pnt c0 = sides[0].front();
+    const gp_Pnt c1 = sides[0].back();
+    const gp_Pnt c2 = sides[2].front();
+    const gp_Pnt c3 = sides[2].back();
+    int uniq = 1;
+    if (!same3(c1, c0)) ++uniq;
+    if (!same3(c2, c0) && !same3(c2, c1)) ++uniq;
+    if (!same3(c3, c0) && !same3(c3, c1) && !same3(c3, c2)) ++uniq;
+    if (uniq < 3) return false;
+    const int nu = int(sides[0].size()) - 1;
+    const int nv = int(sides[1].size()) - 1;
+    if (nu < 1 || nv < 1) return false;
+    BRepAdaptor_Surface surf(face);
+    auto uvOf = [&](const gp_Pnt& p) {
+        try {
+            Handle(Geom_Surface) gs = BRep_Tool::Surface(face);
+            ShapeAnalysis_Surface sas(gs);
+            return sas.ValueOfUV(p, 1e-6);
+        } catch (const Standard_Failure&) {
+            return gp_Pnt2d(0, 0);
+        }
+    };
+    std::vector<std::vector<gp_Pnt2d>> uv(4);
+    for (int s = 0; s < 4; ++s) {
+        uv[s].reserve(sides[s].size());
+        for (const gp_Pnt& p : sides[s]) uv[s].push_back(uvOf(p));
+    }
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    const int cols = nu + 1;
+    const int rows = nv + 1;
+    std::vector<uint32_t> idx(size_t(rows) * size_t(cols));
+    const gp_Pnt2d p00 = uv[0][0];
+    const gp_Pnt2d p10 = uv[0][nu];
+    const gp_Pnt2d p11 = uv[1][nv];
+    const gp_Pnt2d p01 = uv[2][nu];
+    for (int j = 0; j < rows; ++j) {
+        const double t = double(j) / double(nv);
+        for (int i = 0; i < cols; ++i) {
+            const double s = double(i) / double(nu);
+            gp_Pnt p;
+            if (j == 0) p = sides[0][i];
+            else if (i == nu) p = sides[1][j];
+            else if (j == nv) p = sides[2][nu - i];
+            else if (i == 0) p = sides[3][nv - j];
+            else {
+                const gp_Pnt2d c0 = uv[0][i];
+                const gp_Pnt2d c1 = uv[2][nu - i];
+                const gp_Pnt2d d0 = uv[3][nv - j];
+                const gp_Pnt2d d1 = uv[1][j];
+                const double uu =
+                    (1 - t) * c0.X() + t * c1.X() + (1 - s) * d0.X() +
+                    s * d1.X() - (1 - s) * (1 - t) * p00.X() -
+                    s * (1 - t) * p10.X() - (1 - s) * t * p01.X() -
+                    s * t * p11.X();
+                const double vv =
+                    (1 - t) * c0.Y() + t * c1.Y() + (1 - s) * d0.Y() +
+                    s * d1.Y() - (1 - s) * (1 - t) * p00.Y() -
+                    s * (1 - t) * p10.Y() - (1 - s) * t * p01.Y() -
+                    s * t * p11.Y();
+                try {
+                    p = surf.Value(uu, vv);
+                } catch (const Standard_Failure&) {
+                    return false;
+                }
+            }
+            idx[size_t(j) * size_t(cols) + size_t(i)] =
+                uint32_t(mesh.vertices.size());
+            mesh.vertices.push_back({p.X(), p.Y(), p.Z()});
+            mesh.anchors.push_back(projectAnchor(face, faceId, p));
+        }
+    }
+    const size_t before = mesh.polygonCount();
+    for (int j = 0; j < nv; ++j) {
+        for (int i = 0; i < nu; ++i) {
+            const uint32_t a = idx[size_t(j) * size_t(cols) + size_t(i)];
+            const uint32_t b = idx[size_t(j) * size_t(cols) + size_t(i + 1)];
+            const uint32_t c = idx[size_t(j + 1) * size_t(cols) + size_t(i + 1)];
+            const uint32_t d = idx[size_t(j + 1) * size_t(cols) + size_t(i)];
             if (flip) mesh.polygons.push_back({a, d, c, b});
             else mesh.polygons.push_back({a, b, c, d});
             mesh.polygonFaceId.push_back(faceId);
@@ -469,12 +1124,16 @@ PolyMesh meshIndependent(const Model& model, const Analysis& analysis,
         const size_t polysBefore = mesh.polygonCount();
         MesherKind kind = MesherKind::Fallback;
         bool ngon = false;
-        if (s.minimal && meshPlanarNgon(face, fid, model, samples, mesh)) {
+        if (s.minimal && meshSampledPlanar(face, fid, model, samples, mesh)) {
             ngon = true;
             kind = MesherKind::MinimalNGon;
-        } else if (fc == FeatureClass::Drum &&
-                   meshDrumGrid(face, fid, s, edgeN, model, mesh)) {
+        } else if ((ck == ChartKind::FullPeriod || ck == ChartKind::Pole) &&
+                   meshDrumGrid(face, fid, s, edgeN, model, samples, mesh)) {
             kind = MesherKind::RevolutionGrid;
+        } else if (meshTransfinite4(face, fid, model, samples, mesh)) {
+            kind = MesherKind::CoonsGrid;
+        } else if (meshUvFill(face, fid, s, model, samples, mesh)) {
+            kind = MesherKind::PlateWeb;
         } else {
             meshFaceOcct(face, fid, s, radius, fc, model, edgeN, samples, mesh);
         }
