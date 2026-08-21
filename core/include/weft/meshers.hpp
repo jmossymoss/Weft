@@ -154,6 +154,9 @@ struct GenerationSettings {
     // skips fallback-border conformation, seam stitching, and final cleanup.
     // Export/CLI generation leaves this true for the authoritative mesh.
     bool finalizeMesh = true;
+    // Independent tessellation (this fork). When true, CLI mesh/validate
+    // call meshIndependent() instead of generate(). Not persisted in recipes.
+    bool independentMesh = false;
     // EXPERIMENT (decoupled seams): skip the global count-equalization
     // repairs (chained-coons sum repair, revolution rim SUM constraint)
     // and let the post-weld unionSeams splice reconcile mismatched

@@ -14,6 +14,11 @@ target_link_libraries(bake_queue_tests PRIVATE weft_core)
 add_test(NAME bake_queue COMMAND bake_queue_tests)
 weft_deploy_occt_dlls(bake_queue_tests)
 
+add_executable(independent_mesh_tests test_independent_mesh.cpp)
+target_link_libraries(independent_mesh_tests PRIVATE weft_core)
+add_test(NAME independent_mesh COMMAND independent_mesh_tests)
+weft_deploy_occt_dlls(independent_mesh_tests)
+
 add_executable(topology_cache_tests test_topology_cache.cpp)
 target_link_libraries(topology_cache_tests PRIVATE weft_core)
 add_test(NAME topology_cache COMMAND topology_cache_tests)

@@ -15,6 +15,7 @@ add_library(weft_core
   src/preprocess.cpp
   src/mesh.cpp
   src/meshers.cpp
+  src/independent_mesh.cpp
   src/mesher_sampling.cpp
   src/mesher_trace.cpp
   src/mesher_utils.cpp
