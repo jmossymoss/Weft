@@ -328,6 +328,26 @@ void reverseLoop(SampleLoop& loop) {
     std::reverse(loop.uv.begin(), loop.uv.end());
 }
 
+void alignLoopUv(SampleLoop& loop, const SampleLoop& ref,
+                 const BRepAdaptor_Surface& surf) {
+    if (loop.uv.empty() || ref.uv.empty()) return;
+    gp_Pnt2d shift(0, 0);
+    double best = 1e300;
+    for (const gp_Pnt2d& r : ref.uv) {
+        const gp_Pnt2d u = unwrapUv(loop.uv[0], r, surf);
+        const double d = u.SquareDistance(r);
+        if (d < best) {
+            best = d;
+            shift = gp_Pnt2d(u.X() - loop.uv[0].X(), u.Y() - loop.uv[0].Y());
+        }
+    }
+    if (shift.X() == 0.0 && shift.Y() == 0.0) return;
+    for (gp_Pnt2d& p : loop.uv) {
+        p.SetX(p.X() + shift.X());
+        p.SetY(p.Y() + shift.Y());
+    }
+}
+
 int uvWinding(const std::vector<gp_Pnt2d>& loop, double u, double v) {
     int w = 0;
     const size_t n = loop.size();
@@ -581,6 +601,8 @@ bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
         SampleLoop hole = collectWireLoopUv(w, face, model, samples);
         if (hole.p3.size() >= 3) holes.push_back(std::move(hole));
     }
+    BRepAdaptor_Surface surf(face);
+    for (SampleLoop& hole : holes) alignLoopUv(hole, outer, surf);
     if (uvSignedArea(outer.uv) < 0) reverseLoop(outer);
     for (SampleLoop& hole : holes) {
         if (uvSignedArea(hole.uv) > 0) reverseLoop(hole);
@@ -652,10 +674,6 @@ bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
 
     std::vector<std::array<uint32_t, 3>> tris;
     if (!earClipUv(ringUv, ringIdx, tris)) {
-        if (!holes.empty()) {
-            rollback();
-            return false;
-        }
         tris.clear();
         for (size_t k = 1; k + 1 < ringIdx.size(); ++k) {
             tris.push_back({ringIdx[0], ringIdx[k], ringIdx[k + 1]});
