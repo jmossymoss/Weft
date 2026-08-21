@@ -6,12 +6,15 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
 #include <Geom2d_Curve.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <Geom_Surface.hxx>
 #include <GeomAbs_CurveType.hxx>
 #include <GeomAbs_SurfaceType.hxx>
@@ -28,18 +31,23 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
+#include <gp_Pln.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Pnt2d.hxx>
+#include <gp_Vec.hxx>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <vector>
 
 namespace weft {
 namespace {
+
+std::mutex gOcctMeshMutex;
 
 struct EdgeSamples {
     std::vector<gp_Pnt> pts;  // n+1 points, first to last along forward curve
@@ -95,6 +103,67 @@ bool isPlanarFace(const TopoDS_Face& face) {
     try {
         BRepAdaptor_Surface surf(face);
         return surf.GetType() == GeomAbs_Plane;
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+}
+
+bool latticeSurface(const BRepAdaptor_Surface& surf) {
+    switch (surf.GetType()) {
+        case GeomAbs_Cylinder:
+        case GeomAbs_Cone:
+        case GeomAbs_Sphere:
+        case GeomAbs_Torus:
+        case GeomAbs_SurfaceOfRevolution:
+        case GeomAbs_SurfaceOfExtrusion:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool edgeUvSpan(const TopoDS_Face& face, const TopoDS_Edge& edge, double& dU,
+                double& dV) {
+    dU = 0;
+    dV = 0;
+    double f = 0, l = 0;
+    Handle(Geom2d_Curve) pc;
+    try {
+        pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+    } catch (const Standard_Failure&) {
+        return false;
+    }
+    if (pc.IsNull() || !(l > f)) return false;
+    const gp_Pnt2d a = pc->Value(f);
+    const gp_Pnt2d b = pc->Value(l);
+    dU = std::abs(b.X() - a.X());
+    dV = std::abs(b.Y() - a.Y());
+    try {
+        BRepAdaptor_Surface surf(face);
+        if (surf.IsUPeriodic()) {
+            const double p = surf.UPeriod();
+            if (p > 0 && dU > 0.5 * p) dU = p - dU;
+        }
+        if (surf.IsVPeriodic()) {
+            const double p = surf.VPeriod();
+            if (p > 0 && dV > 0.5 * p) dV = p - dV;
+        }
+    } catch (const Standard_Failure&) {
+    }
+    return dU + dV > 1e-16;
+}
+
+bool faceNormalAt(const TopoDS_Face& face, double u, double v, gp_Vec& n) {
+    try {
+        BRepAdaptor_Surface surf(face);
+        gp_Pnt p;
+        gp_Vec du, dv;
+        surf.D1(u, v, p, du, dv);
+        n = du.Crossed(dv);
+        if (n.Magnitude() < 1e-18) return false;
+        n.Normalize();
+        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+        return true;
     } catch (const Standard_Failure&) {
         return false;
     }
@@ -352,8 +421,21 @@ double uvCross(const gp_Pnt2d& o, const gp_Pnt2d& a, const gp_Pnt2d& b) {
     return (a.X() - o.X()) * (b.Y() - o.Y()) - (a.Y() - o.Y()) * (b.X() - o.X());
 }
 
+bool uvSegmentsCross(const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c,
+                     const gp_Pnt2d& d) {
+    const double eps = 1e-12;
+    auto near2 = [&](const gp_Pnt2d& p, const gp_Pnt2d& q) {
+        return p.SquareDistance(q) < eps;
+    };
+    if (near2(a, c) || near2(a, d) || near2(b, c) || near2(b, d)) return false;
+    const double d1 = uvCross(c, d, a), d2 = uvCross(c, d, b);
+    const double d3 = uvCross(a, b, c), d4 = uvCross(a, b, d);
+    return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0)) &&
+           std::abs(d1 - d2) > eps && std::abs(d3 - d4) > eps;
+}
+
 bool earClipUv(const std::vector<gp_Pnt2d>& uv, const std::vector<uint32_t>& idx,
-               std::vector<std::array<uint32_t, 3>>& tris) {
+               std::vector<std::array<uint32_t, 3>>& tris, bool force) {
     const size_t n = uv.size();
     tris.clear();
     if (n < 3 || idx.size() != n) return false;
@@ -403,8 +485,21 @@ bool earClipUv(const std::vector<gp_Pnt2d>& uv, const std::vector<uint32_t>& idx
             bestQ = q;
         }
         if (bestK >= ring.size()) {
-            tris.clear();
-            return false;
+            if (!force) {
+                tris.clear();
+                return false;
+            }
+            bestQ = -1.0;
+            for (size_t k = 0; k < ring.size(); ++k) {
+                const size_t ip = ring[(k + ring.size() - 1) % ring.size()];
+                const size_t ic = ring[k];
+                const size_t in = ring[(k + 1) % ring.size()];
+                const double q = std::abs(uvCross(uv[ip], uv[ic], uv[in]));
+                if (q >= bestQ) {
+                    bestQ = q;
+                    bestK = k;
+                }
+            }
         }
         const size_t ip = ring[(bestK + ring.size() - 1) % ring.size()];
         const size_t ic = ring[bestK];
@@ -427,6 +522,113 @@ void emitUvTris(PolyMesh& mesh, int faceId, bool flip,
         if (flip) mesh.polygons.push_back({t[0], t[2], t[1]});
         else mesh.polygons.push_back({t[0], t[1], t[2]});
         mesh.polygonFaceId.push_back(faceId);
+    }
+}
+
+// Tessellate UV loops as a planar face with huge deflection so OCCT does
+// not insert Steiner points. Nodes map back to the exact sample verts.
+bool uvDelaunayFill(const std::vector<gp_Pnt2d>& outerUv,
+                    const std::vector<uint32_t>& outerIdx,
+                    const std::vector<std::vector<gp_Pnt2d>>& holeUv,
+                    const std::vector<std::vector<uint32_t>>& holeIdx,
+                    bool flip, int faceId, const TopoDS_Face& cadFace,
+                    PolyMesh& mesh) {
+    if (outerUv.size() < 3 || outerUv.size() != outerIdx.size()) return false;
+    if (holeUv.size() != holeIdx.size()) return false;
+    double span = 0;
+    for (const gp_Pnt2d& p : outerUv) {
+        span = std::max({span, std::abs(p.X()), std::abs(p.Y())});
+    }
+    const double tol = 1e-9 * std::max(1.0, span);
+    std::map<std::pair<int64_t, int64_t>, uint32_t> vertByUv;
+    auto keyOf = [&](double x, double y) {
+        return std::make_pair(int64_t(std::llround(x / tol)),
+                              int64_t(std::llround(y / tol)));
+    };
+    auto addRing = [&](const std::vector<gp_Pnt2d>& uv,
+                       const std::vector<uint32_t>& idx) {
+        if (uv.size() != idx.size() || uv.size() < 3) return false;
+        for (size_t i = 0; i < uv.size(); ++i) {
+            if (uv[i].SquareDistance(uv[(i + 1) % uv.size()]) < tol * tol) {
+                return false;
+            }
+            auto [it, fresh] = vertByUv.try_emplace(
+                keyOf(uv[i].X(), uv[i].Y()), idx[i]);
+            if (!fresh && it->second != idx[i]) return false;
+        }
+        return true;
+    };
+    if (!addRing(outerUv, outerIdx)) return false;
+    for (size_t h = 0; h < holeUv.size(); ++h) {
+        if (!addRing(holeUv[h], holeIdx[h])) return false;
+    }
+    try {
+        auto makeWire = [&](const std::vector<gp_Pnt2d>& uv, TopoDS_Wire& wire) {
+            BRepBuilderAPI_MakePolygon mp;
+            for (const gp_Pnt2d& p : uv) mp.Add(gp_Pnt(p.X(), p.Y(), 0.0));
+            mp.Close();
+            if (!mp.IsDone()) return false;
+            wire = mp.Wire();
+            return true;
+        };
+        TopoDS_Wire ow;
+        if (!makeWire(outerUv, ow)) return false;
+        BRepBuilderAPI_MakeFace mf(gp_Pln(), ow, true);
+        for (const auto& h : holeUv) {
+            TopoDS_Wire hw;
+            if (!makeWire(h, hw)) return false;
+            mf.Add(hw);
+        }
+        if (!mf.IsDone()) return false;
+        const TopoDS_Face f = mf.Face();
+        IMeshTools_Parameters mp;
+        mp.Deflection = 1e9;
+        mp.Angle = 1.0;
+        mp.InParallel = false;
+        Handle(Poly_Triangulation) tri;
+        TopLoc_Location loc;
+        {
+            std::lock_guard<std::mutex> lock(gOcctMeshMutex);
+            BRepMesh_IncrementalMesh mesher(f, mp);
+            tri = BRep_Tool::Triangulation(f, loc);
+        }
+        if (tri.IsNull() || tri->NbTriangles() < 1) return false;
+        std::vector<uint32_t> nodeVert(size_t(tri->NbNodes()) + 1, UINT32_MAX);
+        BRepAdaptor_Surface cad(cadFace);
+        for (int n = 1; n <= tri->NbNodes(); ++n) {
+            const gp_Pnt p = tri->Node(n);
+            auto it = vertByUv.find(keyOf(p.X(), p.Y()));
+            if (it != vertByUv.end()) {
+                nodeVert[size_t(n)] = it->second;
+                continue;
+            }
+            try {
+                const gp_Pnt p3 = cad.Value(p.X(), p.Y());
+                nodeVert[size_t(n)] = uint32_t(mesh.vertices.size());
+                mesh.vertices.push_back({p3.X(), p3.Y(), p3.Z()});
+                mesh.anchors.push_back({faceId, p.X(), p.Y()});
+            } catch (const Standard_Failure&) {
+                return false;
+            }
+        }
+        const size_t before = mesh.polygonCount();
+        std::vector<std::array<uint32_t, 3>> tris;
+        tris.reserve(size_t(tri->NbTriangles()));
+        for (int i = 1; i <= tri->NbTriangles(); ++i) {
+            int n1, n2, n3;
+            tri->Triangle(i).Get(n1, n2, n3);
+            const uint32_t a = nodeVert[size_t(n1)];
+            const uint32_t b = nodeVert[size_t(n2)];
+            const uint32_t c = nodeVert[size_t(n3)];
+            if (a == UINT32_MAX || b == UINT32_MAX || c == UINT32_MAX) {
+                return false;
+            }
+            tris.push_back({a, b, c});
+        }
+        emitUvTris(mesh, faceId, flip, tris);
+        return mesh.polygonCount() > before;
+    } catch (const Standard_Failure&) {
+        return false;
     }
 }
 
@@ -556,68 +758,113 @@ bool meshUvFill(const TopoDS_Face& face, int faceId, const FaceMeshSettings& s,
         mesh.anchors[outerIdx[i]].u = outer.uv[i].X();
         mesh.anchors[outerIdx[i]].v = outer.uv[i].Y();
     }
-    std::vector<uint32_t> ringIdx = outerIdx;
-    std::vector<gp_Pnt2d> ringUv = outer.uv;
+    std::vector<std::vector<uint32_t>> holeIdxes;
+    std::vector<std::vector<gp_Pnt2d>> holeUvs;
+    holeIdxes.reserve(holes.size());
+    holeUvs.reserve(holes.size());
     for (const SampleLoop& hole : holes) {
         std::vector<uint32_t> holeIdx = emitVerts(mesh, faceId, face, hole.p3);
         for (size_t i = 0; i < holeIdx.size() && i < hole.uv.size(); ++i) {
             mesh.anchors[holeIdx[i]].u = hole.uv[i].X();
             mesh.anchors[holeIdx[i]].v = hole.uv[i].Y();
         }
-        double best = 1e300;
-        size_t oi = 0, hi = 0;
-        for (size_t i = 0; i < ringUv.size(); ++i) {
-            for (size_t j = 0; j < hole.uv.size(); ++j) {
-                const double d = ringUv[i].SquareDistance(hole.uv[j]);
-                if (d < best) {
-                    best = d;
-                    oi = i;
-                    hi = j;
+        holeIdxes.push_back(std::move(holeIdx));
+        holeUvs.push_back(hole.uv);
+    }
+
+    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    {
+        const size_t pDelaunay = mesh.polygonCount();
+        if (uvDelaunayFill(outer.uv, outerIdx, holeUvs, holeIdxes, flip,
+                           faceId, face, mesh) &&
+            mesh.polygonCount() > pDelaunay) {
+            return true;
+        }
+        mesh.polygons.resize(pDelaunay);
+        mesh.polygonFaceId.resize(pDelaunay);
+    }
+
+    std::vector<uint32_t> ringIdx = outerIdx;
+    std::vector<gp_Pnt2d> ringUv = outer.uv;
+    std::vector<size_t> holeOrder(holes.size());
+    for (size_t h = 0; h < holes.size(); ++h) holeOrder[h] = h;
+    auto holeMaxU = [&](size_t h) {
+        size_t best = 0;
+        for (size_t i = 1; i < holeUvs[h].size(); ++i) {
+            if (holeUvs[h][i].X() > holeUvs[h][best].X()) best = i;
+        }
+        return best;
+    };
+    std::sort(holeOrder.begin(), holeOrder.end(), [&](size_t a, size_t b) {
+        return holeUvs[a][holeMaxU(a)].X() > holeUvs[b][holeMaxU(b)].X();
+    });
+    bool merged = true;
+    for (size_t ho = 0; ho < holeOrder.size(); ++ho) {
+        const size_t h = holeOrder[ho];
+        const auto& holeUv = holeUvs[h];
+        const auto& holeIdx = holeIdxes[h];
+        const size_t m = holeMaxU(h);
+        const gp_Pnt2d& M = holeUv[m];
+        auto crossesAny = [&](const gp_Pnt2d& from, const gp_Pnt2d& to) {
+            auto crossesRing = [&](const std::vector<gp_Pnt2d>& uv) {
+                for (size_t i = 0; i < uv.size(); ++i) {
+                    if (uvSegmentsCross(from, to, uv[i],
+                                        uv[(i + 1) % uv.size()])) {
+                        return true;
+                    }
                 }
+                return false;
+            };
+            if (crossesRing(ringUv) || crossesRing(holeUv)) return true;
+            for (size_t k = ho + 1; k < holeOrder.size(); ++k) {
+                if (crossesRing(holeUvs[holeOrder[k]])) return true;
             }
+            return false;
+        };
+        size_t bestP = ringUv.size();
+        double bestD = 1e300;
+        for (size_t p = 0; p < ringUv.size(); ++p) {
+            const double d = M.SquareDistance(ringUv[p]);
+            if (d >= bestD) continue;
+            if (crossesAny(M, ringUv[p])) continue;
+            bestD = d;
+            bestP = p;
+        }
+        if (bestP == ringUv.size()) {
+            merged = false;
+            break;
         }
         std::vector<uint32_t> nextIdx;
         std::vector<gp_Pnt2d> nextUv;
         nextIdx.reserve(ringIdx.size() + holeIdx.size() + 2);
         nextUv.reserve(nextIdx.capacity());
-        for (size_t i = 0; i <= oi; ++i) {
+        for (size_t i = 0; i <= bestP; ++i) {
             nextIdx.push_back(ringIdx[i]);
             nextUv.push_back(ringUv[i]);
         }
-        for (size_t k = 0; k < holeIdx.size(); ++k) {
-            const size_t j = (hi + k) % holeIdx.size();
+        for (size_t k = 0; k <= holeIdx.size(); ++k) {
+            const size_t j = (m + k) % holeIdx.size();
             nextIdx.push_back(holeIdx[j]);
-            nextUv.push_back(hole.uv[j]);
+            nextUv.push_back(holeUv[j]);
         }
-        nextIdx.push_back(holeIdx[hi]);
-        nextUv.push_back(hole.uv[hi]);
-        nextIdx.push_back(ringIdx[oi]);
-        nextUv.push_back(ringUv[oi]);
-        for (size_t i = oi + 1; i < ringIdx.size(); ++i) {
+        for (size_t i = bestP; i < ringIdx.size(); ++i) {
             nextIdx.push_back(ringIdx[i]);
             nextUv.push_back(ringUv[i]);
         }
         ringIdx = std::move(nextIdx);
         ringUv = std::move(nextUv);
     }
-    if (ringIdx.size() < 3) {
+    if (!merged || ringIdx.size() < 3) {
         rollback();
         return false;
     }
 
     std::vector<std::array<uint32_t, 3>> tris;
-    if (!earClipUv(ringUv, ringIdx, tris)) {
-        tris.clear();
-        for (size_t k = 1; k + 1 < ringIdx.size(); ++k) {
-            tris.push_back({ringIdx[0], ringIdx[k], ringIdx[k + 1]});
-        }
-        if (tris.empty()) {
-            rollback();
-            return false;
-        }
+    if (!earClipUv(ringUv, ringIdx, tris, /*force=*/false) || tris.empty()) {
+        rollback();
+        return false;
     }
 
-    const bool flip = face.Orientation() == TopAbs_REVERSED;
     emitUvTris(mesh, faceId, flip, tris);
     if (mesh.polygonCount() == p0) {
         rollback();
@@ -634,54 +881,220 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
     if (wireCount(face) != 1) return false;
     BRepAdaptor_Surface surf(face);
     const GeomAbs_SurfaceType ty = surf.GetType();
-    if (ty != GeomAbs_Cylinder && ty != GeomAbs_Cone &&
-        ty != GeomAbs_SurfaceOfRevolution && ty != GeomAbs_Sphere) {
-        return false;
-    }
+    if (!latticeSurface(surf)) return false;
     int nEdges = 0;
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) ++nEdges;
-    if (nEdges < 3 || nEdges > 4) return false;
-    int nu = std::max(3, s.radial);
-    int nv = std::max(1, s.axial);
+    const bool bothPeriodic = surf.IsUPeriodic() && surf.IsVPeriodic();
+    const int minEdges = bothPeriodic ? 1 : 3;
+    if (nEdges < minEdges || nEdges > 4) return false;
+    int nu = 1;
+    int nv = 1;
+    bool sawU = false;
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
         const int eid = model.edges.FindIndex(ex.Current());
         if (eid < 1 || eid >= int(edgeN.size())) continue;
         const TopoDS_Edge edge = TopoDS::Edge(model.edges(eid));
-        if (edgeIsClosedCurve(edge)) nu = std::max(nu, edgeN[eid]);
-        else if (edgeIsLine(edge)) nv = std::max(nv, edgeN[eid]);
+        double dU = 0, dV = 0;
+        const bool spanned = edgeUvSpan(face, edge, dU, dV);
+        const bool alongU = spanned ? (dU >= dV) : edgeIsClosedCurve(edge);
+        if (alongU) {
+            nu = std::max(nu, edgeN[eid]);
+            sawU = true;
+        } else {
+            nv = std::max(nv, edgeN[eid]);
+        }
     }
-    if (ty == GeomAbs_Sphere) {
-        nv = std::max(nv, std::max(4, nu / 2));
+    const bool drum =
+        ty == GeomAbs_Cylinder || ty == GeomAbs_Cone ||
+        ty == GeomAbs_Sphere || ty == GeomAbs_Torus ||
+        ty == GeomAbs_SurfaceOfRevolution;
+    if (drum || !sawU) nu = std::max(nu, std::max(3, s.radial));
+    if (drum) nv = std::max(nv, std::max(1, s.axial));
+    if (ty == GeomAbs_Sphere) nv = std::max(nv, std::max(4, nu / 2));
+    if (ty == GeomAbs_Torus) {
+        std::vector<int> closedN;
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const int eid = model.edges.FindIndex(ex.Current());
+            if (eid < 1 || eid >= int(edgeN.size())) continue;
+            if (edgeIsClosedCurve(TopoDS::Edge(model.edges(eid)))) {
+                closedN.push_back(edgeN[eid]);
+            }
+        }
+        std::sort(closedN.begin(), closedN.end());
+        if (!closedN.empty()) nu = std::max(nu, closedN.back());
+        if (closedN.size() >= 2) nv = std::max(nv, closedN[closedN.size() - 2]);
+        else nv = std::max(nv, std::max(8, nu / 2));
     }
+    nu = std::max(1, nu);
+    nv = std::max(1, nv);
     double u0 = 0, u1 = 1, v0 = 0, v1 = 1;
     BRepTools::UVBounds(face, u0, u1, v0, v1);
     if (!(std::abs(u1 - u0) > 1e-12) || !(std::abs(v1 - v0) > 1e-12)) {
         return false;
     }
-    const bool uWrap = surf.IsUPeriodic() && std::abs((u1 - u0) - surf.UPeriod()) < 1e-4 * std::max(1.0, surf.UPeriod());
-    const bool vWrap = surf.IsVPeriodic() && std::abs((v1 - v0) - surf.VPeriod()) < 1e-4 * std::max(1.0, surf.VPeriod());
-    const int nU = uWrap ? nu : nu;
-    const int nV = vWrap ? nv : nv;
+    const bool uWrap =
+        surf.IsUPeriodic() &&
+        std::abs((u1 - u0) - surf.UPeriod()) <
+            1e-4 * std::max(1.0, surf.UPeriod());
+    const bool vWrap =
+        surf.IsVPeriodic() &&
+        std::abs((v1 - v0) - surf.VPeriod()) <
+            1e-4 * std::max(1.0, surf.VPeriod());
+
+    const bool bothWrap = uWrap && vWrap;
+    std::vector<std::vector<gp_Pnt>> loftRims;
+    gp_Pnt loftPole(0, 0, 0);
+    bool loftHasPole = false;
+    if (!bothWrap) {
+        for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
+            const int eid = model.edges.FindIndex(edge);
+            if (BRep_Tool::Degenerated(edge)) {
+                TopoDS_Vertex v1, v2;
+                TopExp::Vertices(edge, v1, v2);
+                if (!v1.IsNull()) loftPole = BRep_Tool::Pnt(v1);
+                else if (!v2.IsNull()) loftPole = BRep_Tool::Pnt(v2);
+                loftHasPole = true;
+                continue;
+            }
+            if (eid < 1 || eid >= int(samples.size())) continue;
+            double dU = 0, dV = 0;
+            edgeUvSpan(face, edge, dU, dV);
+            if (!edgeIsClosedCurve(edge)) continue;
+            if (dU + dV > 1e-16 && dV > dU && uWrap) continue;
+            auto ring = orientedEdgeSamples(edge, model, samples);
+            if (ring.size() >= 2 &&
+                ring.front().SquareDistance(ring.back()) < 1e-16) {
+                ring.pop_back();
+            }
+            if (ring.size() >= 3) loftRims.push_back(std::move(ring));
+        }
+    }
+    const bool canLoft = !bothWrap &&
+                         (loftRims.size() == 2 ||
+                          (loftRims.size() == 1 && loftHasPole));
+    if (!canLoft && !uWrap && !vWrap) return false;
+
+    if (canLoft) {
+        auto& r0 = loftRims[0];
+        std::vector<gp_Pnt> r1;
+        if (loftRims.size() == 2) r1 = loftRims[1];
+        else r1.assign(r0.size(), loftPole);
+        auto rotateTo = [](std::vector<gp_Pnt>& ring, const gp_Pnt& target) {
+            size_t best = 0;
+            double bd = 1e300;
+            for (size_t k = 0; k < ring.size(); ++k) {
+                const double d = ring[k].SquareDistance(target);
+                if (d < bd) {
+                    bd = d;
+                    best = k;
+                }
+            }
+            std::rotate(ring.begin(), ring.begin() + long(best), ring.end());
+        };
+        rotateTo(r1, r0[0]);
+        if (r0.size() > 1 && r1.size() > 1) {
+            const double dFwd = r0[1].SquareDistance(r1[1 % r1.size()]);
+            const double dRev = r0[1].SquareDistance(r1.back());
+            if (dRev < dFwd) {
+                std::reverse(r1.begin() + 1, r1.end());
+            }
+        }
+        const int nUloft = int(r0.size());
+        if (nUloft >= 3 && int(r1.size()) == nUloft) {
+        const int nVloft = nv;
+        const int rowsL = nVloft + 1;
+        const int colsL = nUloft;
+        std::vector<gp_Pnt> lpts(size_t(rowsL) * size_t(colsL));
+        Handle(Geom_Surface) gs;
+        try {
+            gs = BRep_Tool::Surface(face);
+        } catch (const Standard_Failure&) {
+        }
+        GeomAPI_ProjectPointOnSurf projector;
+        if (!gs.IsNull()) {
+            try {
+                projector.Init(gp_Pnt(0, 0, 0), gs);
+            } catch (const Standard_Failure&) {
+                gs.Nullify();
+            }
+        }
+        for (int j = 0; j < rowsL; ++j) {
+            const double t = double(j) / double(std::max(1, nVloft));
+            for (int i = 0; i < colsL; ++i) {
+                gp_Pnt p;
+                if (j == 0) p = r0[size_t(i)];
+                else if (j == nVloft) p = r1[size_t(i)];
+                else {
+                    p = gp_Pnt(r0[size_t(i)].XYZ() * (1 - t) +
+                               r1[size_t(i)].XYZ() * t);
+                    if (!gs.IsNull()) {
+                        try {
+                            projector.Perform(p);
+                            if (projector.IsDone() && projector.NbPoints() > 0) {
+                                p = projector.NearestPoint();
+                            }
+                        } catch (const Standard_Failure&) {
+                        }
+                    }
+                }
+                lpts[size_t(j) * size_t(colsL) + size_t(i)] = p;
+            }
+        }
+        bool flip = false;
+        std::vector<uint32_t> idx(lpts.size());
+        for (int j = 0; j < rowsL; ++j) {
+            for (int i = 0; i < colsL; ++i) {
+                const size_t k = size_t(j) * size_t(colsL) + size_t(i);
+                idx[k] = uint32_t(mesh.vertices.size());
+                mesh.vertices.push_back(
+                    {lpts[k].X(), lpts[k].Y(), lpts[k].Z()});
+                const double fu = double(i) / double(std::max(1, nUloft));
+                const double fv = double(j) / double(std::max(1, nVloft));
+                const bool rev = face.Orientation() == TopAbs_REVERSED;
+                const double uu = rev ? u1 - (u1 - u0) * fu : u0 + (u1 - u0) * fu;
+                const double vv = v0 + (v1 - v0) * fv;
+                mesh.anchors.push_back({faceId, uu, vv});
+            }
+        }
+        const size_t before = mesh.polygonCount();
+        for (int j = 0; j < nVloft; ++j) {
+            for (int i = 0; i < nUloft; ++i) {
+                const int i1 = (i + 1) % nUloft;
+                uint32_t a = idx[size_t(j) * size_t(colsL) + size_t(i)];
+                uint32_t b = idx[size_t(j) * size_t(colsL) + size_t(i1)];
+                uint32_t c = idx[size_t(j + 1) * size_t(colsL) + size_t(i1)];
+                uint32_t d = idx[size_t(j + 1) * size_t(colsL) + size_t(i)];
+                if (a == b || b == c || c == d || d == a) continue;
+                if (flip) mesh.polygons.push_back({a, d, c, b});
+                else mesh.polygons.push_back({a, b, c, d});
+                mesh.polygonFaceId.push_back(faceId);
+            }
+        }
+        return mesh.polygonCount() > before;
+        }
+    }
+
+    if (!uWrap && !vWrap) return false;
+
+    const int nU = nu;
+    const int nV = nv;
     const int cols = uWrap ? nU : nU + 1;
     const int rows = vWrap ? nV : nV + 1;
-    const bool flip = face.Orientation() == TopAbs_REVERSED;
-    std::vector<uint32_t> idx(size_t(rows) * size_t(cols));
+    std::vector<gp_Pnt> pts(size_t(rows) * size_t(cols));
+    std::vector<gp_Pnt2d> uvs(pts.size());
     for (int j = 0; j < rows; ++j) {
-        const double v = vWrap ? v0 + (v1 - v0) * (double(j) / double(nV))
-                               : v0 + (v1 - v0) * (double(j) / double(std::max(1, nV)));
+        const double v =
+            v0 + (v1 - v0) * (double(j) / double(std::max(1, nV)));
         for (int i = 0; i < cols; ++i) {
-            const double u = uWrap ? u0 + (u1 - u0) * (double(i) / double(nU))
-                                   : u0 + (u1 - u0) * (double(i) / double(std::max(1, nU)));
-            gp_Pnt p;
+            const double u =
+                u0 + (u1 - u0) * (double(i) / double(std::max(1, nU)));
             try {
-                p = surf.Value(u, v);
+                pts[size_t(j) * size_t(cols) + size_t(i)] = surf.Value(u, v);
             } catch (const Standard_Failure&) {
                 return false;
             }
-            idx[size_t(j) * size_t(cols) + size_t(i)] =
-                uint32_t(mesh.vertices.size());
-            mesh.vertices.push_back({p.X(), p.Y(), p.Z()});
-            mesh.anchors.push_back({faceId, u, v});
+            uvs[size_t(j) * size_t(cols) + size_t(i)] = gp_Pnt2d(u, v);
         }
     }
     std::vector<gp_Pnt> rim;
@@ -690,40 +1103,65 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
         const TopoDS_Edge edge = TopoDS::Edge(ex.Current());
         const int eid = model.edges.FindIndex(edge);
         if (eid < 1 || eid >= int(samples.size())) continue;
-        if (!edgeIsClosedCurve(edge) && !edgeIsLine(edge)) {
-            // keep both; rims are usually closed
-        }
-        const auto& pts = samples[eid];
-        for (size_t k = 0; k < pts.size(); ++k) {
-            rim.push_back(pts[k]);
-            if (k > 0) rimSpace = std::min(rimSpace, pts[k - 1].Distance(pts[k]));
+        const auto& epts = samples[eid];
+        for (size_t k = 0; k < epts.size(); ++k) {
+            rim.push_back(epts[k]);
+            if (k > 0) {
+                rimSpace = std::min(rimSpace, epts[k - 1].Distance(epts[k]));
+            }
         }
     }
     const double snap = (rimSpace < 1e299) ? 0.45 * rimSpace : 0.0;
     if (snap > 0.0 && !rim.empty()) {
         for (int j = 0; j < rows; ++j) {
             for (int i = 0; i < cols; ++i) {
-                const bool border = (j == 0 || j == rows - 1 || i == 0 ||
-                                     i == cols - 1);
+                const bool border =
+                    (!vWrap && (j == 0 || j == rows - 1)) ||
+                    (!uWrap && (i == 0 || i == cols - 1)) ||
+                    (uWrap && vWrap && (j == 0 || i == 0));
                 if (!border) continue;
-                const uint32_t vi = idx[size_t(j) * size_t(cols) + size_t(i)];
-                gp_Pnt p(mesh.vertices[vi][0], mesh.vertices[vi][1],
-                         mesh.vertices[vi][2]);
+                const size_t k = size_t(j) * size_t(cols) + size_t(i);
                 double dist = 0;
-                const gp_Pnt q = nearestSample(p, rim, dist);
-                if (dist <= snap) {
-                    mesh.vertices[vi] = {q.X(), q.Y(), q.Z()};
-                }
+                const gp_Pnt q = nearestSample(pts[k], rim, dist);
+                if (dist <= snap) pts[k] = q;
             }
         }
+    }
+    bool flip = face.Orientation() == TopAbs_REVERSED;
+    {
+        const gp_Pnt& A = pts[0];
+        const gp_Pnt& B = pts[size_t(1) % pts.size()];
+        const gp_Pnt& D = pts[size_t(cols) % pts.size()];
+        gp_Vec pn(A, B);
+        pn = pn.Crossed(gp_Vec(A, D));
+        gp_Vec cadN;
+        const gp_Pnt2d uvMid(
+            0.5 * (uvs[0].X() + uvs[size_t(std::min(1, cols - 1))].X()),
+            0.5 * (uvs[0].Y() +
+                   uvs[size_t(std::min(1, rows - 1)) * size_t(cols)].Y()));
+        if (pn.Magnitude() > 1e-18 &&
+            faceNormalAt(face, uvMid.X(), uvMid.Y(), cadN) &&
+            pn.Dot(cadN) < 0) {
+            flip = true;
+        } else if (pn.Magnitude() > 1e-18 &&
+                   faceNormalAt(face, uvMid.X(), uvMid.Y(), cadN) &&
+                   pn.Dot(cadN) > 0) {
+            flip = false;
+        }
+    }
+    std::vector<uint32_t> idx(pts.size());
+    for (size_t k = 0; k < pts.size(); ++k) {
+        idx[k] = uint32_t(mesh.vertices.size());
+        mesh.vertices.push_back({pts[k].X(), pts[k].Y(), pts[k].Z()});
+        mesh.anchors.push_back({faceId, uvs[k].X(), uvs[k].Y()});
     }
     auto at = [&](int i, int j) -> uint32_t {
         if (uWrap) i = (i + nU) % nU;
         if (vWrap) j = (j + nV) % nV;
         return idx[size_t(j) * size_t(cols) + size_t(i)];
     };
-    const int iMax = uWrap ? nU : nU;
-    const int jMax = vWrap ? nV : nV;
+    const int iMax = nU;
+    const int jMax = nV;
     const size_t before = mesh.polygonCount();
     for (int j = 0; j < jMax; ++j) {
         for (int i = 0; i < iMax; ++i) {
@@ -731,6 +1169,7 @@ bool meshDrumGrid(const TopoDS_Face& face, int faceId,
             uint32_t b = at(i + 1, j);
             uint32_t c = at(i + 1, j + 1);
             uint32_t d = at(i, j + 1);
+            if (a == b || b == c || c == d || d == a) continue;
             if (flip) mesh.polygons.push_back({a, d, c, b});
             else mesh.polygons.push_back({a, b, c, d});
             mesh.polygonFaceId.push_back(faceId);
@@ -765,8 +1204,12 @@ bool meshTransfinite4(const TopoDS_Face& face, int faceId, const Model& model,
     if (!same3(c2, c0) && !same3(c2, c1)) ++uniq;
     if (!same3(c3, c0) && !same3(c3, c1) && !same3(c3, c2)) ++uniq;
     if (uniq < 3) return false;
-    const int nu = std::max(int(sides[0].size()), int(sides[2].size())) - 1;
-    const int nv = std::max(int(sides[1].size()), int(sides[3].size())) - 1;
+    if (int(sides[0].size()) != int(sides[2].size()) ||
+        int(sides[1].size()) != int(sides[3].size())) {
+        return false;
+    }
+    const int nu = int(sides[0].size()) - 1;
+    const int nv = int(sides[1].size()) - 1;
     if (nu < 1 || nv < 1) return false;
     auto pickPnt = [](const std::vector<gp_Pnt>& side, int i, int nDst) {
         const int nSrc = int(side.size()) - 1;
@@ -774,35 +1217,27 @@ bool meshTransfinite4(const TopoDS_Face& face, int faceId, const Model& model,
         const int j = nDst <= 0 ? 0 : (i * nSrc + nDst / 2) / nDst;
         return side[size_t(std::clamp(j, 0, nSrc))];
     };
-    BRepAdaptor_Surface surf(face);
-    auto uvOf = [&](const gp_Pnt& p) {
-        try {
-            Handle(Geom_Surface) gs = BRep_Tool::Surface(face);
-            ShapeAnalysis_Surface sas(gs);
-            return sas.ValueOfUV(p, 1e-6);
-        } catch (const Standard_Failure&) {
-            return gp_Pnt2d(0, 0);
-        }
-    };
-    std::vector<std::vector<gp_Pnt2d>> uv(4);
-    for (int s = 0; s < 4; ++s) {
-        uv[s].reserve(sides[s].size());
-        for (const gp_Pnt& p : sides[s]) uv[s].push_back(uvOf(p));
+    Handle(Geom_Surface) gs;
+    try {
+        gs = BRep_Tool::Surface(face);
+    } catch (const Standard_Failure&) {
+        return false;
     }
-    auto pickUv = [](const std::vector<gp_Pnt2d>& side, int i, int nDst) {
-        const int nSrc = int(side.size()) - 1;
-        if (nSrc <= 0) return side.front();
-        const int j = nDst <= 0 ? 0 : (i * nSrc + nDst / 2) / nDst;
-        return side[size_t(std::clamp(j, 0, nSrc))];
-    };
-    const bool flip = face.Orientation() == TopAbs_REVERSED;
+    GeomAPI_ProjectPointOnSurf projector;
+    if (!gs.IsNull()) {
+        try {
+            projector.Init(gp_Pnt(0, 0, 0), gs);
+        } catch (const Standard_Failure&) {
+            gs.Nullify();
+        }
+    }
     const int cols = nu + 1;
     const int rows = nv + 1;
-    std::vector<uint32_t> idx(size_t(rows) * size_t(cols));
-    const gp_Pnt2d p00 = pickUv(uv[0], 0, nu);
-    const gp_Pnt2d p10 = pickUv(uv[0], nu, nu);
-    const gp_Pnt2d p11 = pickUv(uv[1], nv, nv);
-    const gp_Pnt2d p01 = pickUv(uv[2], nu, nu);
+    std::vector<gp_Pnt> pts(size_t(rows) * size_t(cols));
+    const gp_Pnt c00 = pickPnt(sides[0], 0, nu);
+    const gp_Pnt c10 = pickPnt(sides[0], nu, nu);
+    const gp_Pnt c11 = pickPnt(sides[2], 0, nu);
+    const gp_Pnt c01 = pickPnt(sides[2], nu, nu);
     for (int j = 0; j < rows; ++j) {
         const double t = double(j) / double(nv);
         for (int i = 0; i < cols; ++i) {
@@ -813,31 +1248,47 @@ bool meshTransfinite4(const TopoDS_Face& face, int faceId, const Model& model,
             else if (j == nv) p = pickPnt(sides[2], nu - i, nu);
             else if (i == 0) p = pickPnt(sides[3], nv - j, nv);
             else {
-                const gp_Pnt2d c0u = pickUv(uv[0], i, nu);
-                const gp_Pnt2d c1u = pickUv(uv[2], nu - i, nu);
-                const gp_Pnt2d d0u = pickUv(uv[3], nv - j, nv);
-                const gp_Pnt2d d1u = pickUv(uv[1], j, nv);
-                const double uu =
-                    (1 - t) * c0u.X() + t * c1u.X() + (1 - s) * d0u.X() +
-                    s * d1u.X() - (1 - s) * (1 - t) * p00.X() -
-                    s * (1 - t) * p10.X() - (1 - s) * t * p01.X() -
-                    s * t * p11.X();
-                const double vv =
-                    (1 - t) * c0u.Y() + t * c1u.Y() + (1 - s) * d0u.Y() +
-                    s * d1u.Y() - (1 - s) * (1 - t) * p00.Y() -
-                    s * (1 - t) * p10.Y() - (1 - s) * t * p01.Y() -
-                    s * t * p11.Y();
-                try {
-                    p = surf.Value(uu, vv);
-                } catch (const Standard_Failure&) {
-                    return false;
+                const gp_Pnt btm = pickPnt(sides[0], i, nu);
+                const gp_Pnt top = pickPnt(sides[2], nu - i, nu);
+                const gp_Pnt lft = pickPnt(sides[3], nv - j, nv);
+                const gp_Pnt rgt = pickPnt(sides[1], j, nv);
+                const gp_XYZ blend =
+                    btm.XYZ() * (1 - t) + top.XYZ() * t + lft.XYZ() * (1 - s) +
+                    rgt.XYZ() * s -
+                    (c00.XYZ() * ((1 - s) * (1 - t)) +
+                     c10.XYZ() * (s * (1 - t)) + c11.XYZ() * (s * t) +
+                     c01.XYZ() * ((1 - s) * t));
+                p = gp_Pnt(blend);
+                if (!gs.IsNull()) {
+                    try {
+                        projector.Perform(p);
+                        if (projector.IsDone() && projector.NbPoints() > 0) {
+                            p = projector.NearestPoint();
+                        }
+                    } catch (const Standard_Failure&) {
+                    }
                 }
             }
-            idx[size_t(j) * size_t(cols) + size_t(i)] =
-                uint32_t(mesh.vertices.size());
-            mesh.vertices.push_back({p.X(), p.Y(), p.Z()});
-            mesh.anchors.push_back(projectAnchor(face, faceId, p));
+            pts[size_t(j) * size_t(cols) + size_t(i)] = p;
         }
+    }
+    bool flip = face.Orientation() == TopAbs_REVERSED;
+    {
+        gp_Vec pn(pts[0], pts[1]);
+        pn = pn.Crossed(gp_Vec(pts[0], pts[size_t(cols)]));
+        gp_Vec cadN;
+        double u0 = 0, u1 = 1, v0 = 0, v1 = 1;
+        BRepTools::UVBounds(face, u0, u1, v0, v1);
+        if (pn.Magnitude() > 1e-18 &&
+            faceNormalAt(face, 0.5 * (u0 + u1), 0.5 * (v0 + v1), cadN)) {
+            flip = pn.Dot(cadN) < 0;
+        }
+    }
+    std::vector<uint32_t> idx(pts.size());
+    for (size_t k = 0; k < pts.size(); ++k) {
+        idx[k] = uint32_t(mesh.vertices.size());
+        mesh.vertices.push_back({pts[k].X(), pts[k].Y(), pts[k].Z()});
+        mesh.anchors.push_back(projectAnchor(face, faceId, pts[k]));
     }
     const size_t before = mesh.polygonCount();
     for (int j = 0; j < nv; ++j) {
@@ -864,7 +1315,7 @@ void meshFaceOcct(const TopoDS_Face& face, int faceId,
     double angleRad = std::max(1.0, s.angleToleranceDeg) * M_PI / 180.0;
     int maxN = 1;
     std::vector<gp_Pnt> border;
-    double spacing = 1e300;
+    std::vector<double> spacings;
     for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
         const int eid = model.edges.FindIndex(ex.Current());
         if (eid < 1 || eid >= int(edgeN.size())) continue;
@@ -874,7 +1325,7 @@ void meshFaceOcct(const TopoDS_Face& face, int faceId,
             for (size_t i = 0; i < pts.size(); ++i) {
                 border.push_back(pts[i]);
                 if (i > 0) {
-                    spacing = std::min(spacing, pts[i - 1].Distance(pts[i]));
+                    spacings.push_back(pts[i - 1].Distance(pts[i]));
                 }
             }
         }
@@ -895,8 +1346,7 @@ void meshFaceOcct(const TopoDS_Face& face, int faceId,
     Handle(Poly_Triangulation) tri;
     TopLoc_Location loc;
     {
-        static std::mutex occtMeshMutex;
-        std::lock_guard<std::mutex> lock(occtMeshMutex);
+        std::lock_guard<std::mutex> lock(gOcctMeshMutex);
         BRepBuilderAPI_Copy copier(face, Standard_False, Standard_False);
         const TopoDS_Face copy = TopoDS::Face(copier.Shape());
         BRepTools::Clean(copy);
@@ -915,7 +1365,13 @@ void meshFaceOcct(const TopoDS_Face& face, int faceId,
     const bool hasUV = tri->HasUVNodes();
     const gp_Trsf trsf = loc.Transformation();
     const uint32_t base = uint32_t(mesh.vertices.size());
-    const double snap = (spacing < 1e299) ? 0.45 * spacing : 0.0;
+    double snap = 0.0;
+    if (!spacings.empty()) {
+        const size_t mid = spacings.size() / 2;
+        std::nth_element(spacings.begin(), spacings.begin() + long(mid),
+                         spacings.end());
+        snap = 0.45 * spacings[mid];
+    }
     for (int i = 1; i <= tri->NbNodes(); ++i) {
         gp_Pnt p = tri->Node(i).Transformed(trsf);
         if (snap > 0.0 && !border.empty()) {
@@ -1054,20 +1510,36 @@ PolyMesh meshIndependent(const Model& model, const Analysis& analysis,
             mesh.polygonFaceId.resize(polysBefore);
         };
         try {
+            bool ok = false;
             if (s.minimal &&
                 meshSampledPlanar(face, fid, model, samples, mesh)) {
                 ngon = true;
                 kind = MesherKind::MinimalNGon;
-            } else if ((ck == ChartKind::FullPeriod ||
-                        ck == ChartKind::Pole) &&
-                       meshDrumGrid(face, fid, s, edgeN, model, samples,
-                                    mesh)) {
-                kind = MesherKind::RevolutionGrid;
-            } else if (meshTransfinite4(face, fid, model, samples, mesh)) {
-                kind = MesherKind::CoonsGrid;
-            } else if (meshUvFill(face, fid, s, model, samples, mesh)) {
-                kind = MesherKind::PlateWeb;
-            } else {
+                ok = true;
+            }
+            if (!ok) {
+                rollbackFace();
+                if (meshDrumGrid(face, fid, s, edgeN, model, samples, mesh)) {
+                    kind = MesherKind::RevolutionGrid;
+                    ok = true;
+                }
+            }
+            if (!ok) {
+                rollbackFace();
+                if (meshTransfinite4(face, fid, model, samples, mesh)) {
+                    kind = MesherKind::CoonsGrid;
+                    ok = true;
+                }
+            }
+            if (!ok) {
+                rollbackFace();
+                if (meshUvFill(face, fid, s, model, samples, mesh)) {
+                    kind = MesherKind::PlateWeb;
+                    ok = true;
+                }
+            }
+            if (!ok) {
+                rollbackFace();
                 meshFaceOcct(face, fid, s, radius, fc, model, edgeN, samples,
                              mesh);
             }

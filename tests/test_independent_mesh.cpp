@@ -187,6 +187,130 @@ static void testDrumSpanIsLocal() {
           mb.vertexCount() != ma.vertexCount());
 }
 
+static void testTorusUvLattice() {
+    std::printf("-- independent torus: UV lattice, not an ear-clip fan --\n");
+    weft::Model model = loadFixture("torus");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs, &report);
+    CHECK(mesh.countQuads() >= 64);
+    CHECK(mesh.countQuads() > mesh.countTris());
+    CHECK(report.faceMesher[1] == weft::MesherKind::RevolutionGrid);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+    CHECK(vr.sliverPolygons < mesh.polygonCount() / 4);
+}
+
+static void testEllipseWallIsTube() {
+    std::printf("-- independent ellipse_plate: hole wall is a tube --\n");
+    weft::Model model = loadFixture("ellipse_plate");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs, &report);
+    int holePlates = 0;
+    int extrusionQuads = 0;
+    for (const auto& f : analysis.faces) {
+        size_t n = 0, tris = 0, quads = 0;
+        for (size_t p = 0; p < mesh.polygonFaceId.size(); ++p) {
+            if (mesh.polygonFaceId[p] != f.id) continue;
+            ++n;
+            const size_t a = mesh.polygons[p].size();
+            if (a == 3) ++tris;
+            else if (a == 4) ++quads;
+        }
+        if (f.featureClass == weft::FeatureClass::HolePlate) {
+            CHECK_EQ(n, size_t(1));
+            ++holePlates;
+        }
+        if (f.type == weft::SurfaceType::Extrusion) {
+            extrusionQuads += int(quads);
+            CHECK(quads > tris);
+            CHECK(report.faceMesher[f.id] == weft::MesherKind::RevolutionGrid ||
+                  report.faceMesher[f.id] == weft::MesherKind::CoonsGrid);
+        }
+    }
+    CHECK(holePlates >= 2);
+    CHECK(extrusionQuads > 0);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+}
+
+static void testBezierSlabWinding() {
+    std::printf("-- independent bezier_slab: 3D coons keeps winding --\n");
+    weft::Model model = loadFixture("bezier_slab");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+    CHECK_EQ(vr.windingConflicts, size_t(0));
+}
+
+static void testTrimmedDrumKeepsSamples() {
+    std::printf("-- independent slotted: trimmed drums keep exact samples --\n");
+    weft::Model model = loadFixture("slotted");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs, &report);
+    int drums = 0, occtDrums = 0;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Cylinder) continue;
+        ++drums;
+        auto it = report.faceMesher.find(f.id);
+        if (it != report.faceMesher.end() &&
+            it->second == weft::MesherKind::Fallback) {
+            ++occtDrums;
+        }
+    }
+    CHECK(drums >= 1);
+    CHECK_EQ(occtDrums, 0);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+}
+
+static void testNotchedWallNotFan() {
+    std::printf("-- independent notched: sample-exact fill, not OCCT 3D --\n");
+    weft::Model model = loadFixture("notched");
+    weft::Analysis analysis = weft::analyze(model);
+    weft::GenerationSettings gs;
+    gs.independentMesh = true;
+    gs.defaults.minimal = true;
+    weft::GenerationReport report;
+    weft::PolyMesh mesh = weft::meshIndependent(model, analysis, gs, &report);
+    bool sawDrum = false;
+    for (const auto& f : analysis.faces) {
+        if (f.type != weft::SurfaceType::Cylinder) continue;
+        sawDrum = true;
+        size_t n = 0;
+        for (int id : mesh.polygonFaceId) {
+            if (id == f.id) ++n;
+        }
+        CHECK(n > 0);
+        auto it = report.faceMesher.find(f.id);
+        CHECK(it != report.faceMesher.end());
+        CHECK(it->second != weft::MesherKind::Fallback);
+    }
+    CHECK(sawDrum);
+    weft::ValidationReport vr = weft::validateMesh(mesh, &model);
+    CHECK_EQ(vr.openEdges, size_t(0));
+    CHECK_EQ(vr.nonManifoldEdges, size_t(0));
+}
+
 int main() {
     testBoxNgons();
     testCylinderCaps();
@@ -194,6 +318,11 @@ int main() {
     testFilletWatertight();
     testSphereClosed();
     testDrumSpanIsLocal();
+    testTorusUvLattice();
+    testEllipseWallIsTube();
+    testBezierSlabWinding();
+    testTrimmedDrumKeepsSamples();
+    testNotchedWallNotFan();
     if (gFails) {
         std::fprintf(stderr, "%d FAILURE(S)\n", gFails);
         return 1;
