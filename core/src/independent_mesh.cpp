@@ -348,27 +348,6 @@ void alignLoopUv(SampleLoop& loop, const SampleLoop& ref,
     }
 }
 
-int uvWinding(const std::vector<gp_Pnt2d>& loop, double u, double v) {
-    int w = 0;
-    const size_t n = loop.size();
-    for (size_t i = 0; i < n; ++i) {
-        const gp_Pnt2d& a = loop[i];
-        const gp_Pnt2d& b = loop[(i + 1) % n];
-        if (a.Y() <= v) {
-            if (b.Y() > v) {
-                const double c =
-                    (b.X() - a.X()) * (v - a.Y()) - (u - a.X()) * (b.Y() - a.Y());
-                if (c > 0) ++w;
-            }
-        } else if (b.Y() <= v) {
-            const double c =
-                (b.X() - a.X()) * (v - a.Y()) - (u - a.X()) * (b.Y() - a.Y());
-            if (c < 0) --w;
-        }
-    }
-    return w;
-}
-
 double uvCross(const gp_Pnt2d& o, const gp_Pnt2d& a, const gp_Pnt2d& b) {
     return (a.X() - o.X()) * (b.Y() - o.Y()) - (a.Y() - o.Y()) * (b.X() - o.X());
 }
@@ -439,52 +418,6 @@ bool earClipUv(const std::vector<gp_Pnt2d>& uv, const std::vector<uint32_t>& idx
     }
     tris.push_back({idx[ring[0]], idx[ring[1]], idx[ring[2]]});
     return true;
-}
-
-bool pointInUvTri(const gp_Pnt2d& a, const gp_Pnt2d& b, const gp_Pnt2d& c,
-                  const gp_Pnt2d& p, double eps) {
-    const double c0 = uvCross(a, b, p);
-    const double c1 = uvCross(b, c, p);
-    const double c2 = uvCross(c, a, p);
-    const bool pos = c0 >= -eps && c1 >= -eps && c2 >= -eps;
-    const bool neg = c0 <= eps && c1 <= eps && c2 <= eps;
-    return pos || neg;
-}
-
-gp_Pnt2d uvOfMeshVert(const PolyMesh& mesh, uint32_t i) {
-    const Anchor& a = mesh.anchors[i];
-    return gp_Pnt2d(a.u, a.v);
-}
-
-void insertUvPoint(PolyMesh& mesh, int faceId, BRepAdaptor_Surface& surf,
-                   const gp_Pnt2d& p, std::vector<std::array<uint32_t, 3>>& tris) {
-    const double eps = 1e-18;
-    int hit = -1;
-    for (int t = 0; t < int(tris.size()); ++t) {
-        const auto& tri = tris[size_t(t)];
-        if (pointInUvTri(uvOfMeshVert(mesh, tri[0]), uvOfMeshVert(mesh, tri[1]),
-                         uvOfMeshVert(mesh, tri[2]), p, eps)) {
-            hit = t;
-            break;
-        }
-    }
-    if (hit < 0) return;
-    const auto tri = tris[size_t(hit)];
-    for (int k = 0; k < 3; ++k) {
-        if (uvOfMeshVert(mesh, tri[size_t(k)]).SquareDistance(p) < 1e-16) return;
-    }
-    gp_Pnt p3;
-    try {
-        p3 = surf.Value(p.X(), p.Y());
-    } catch (const Standard_Failure&) {
-        return;
-    }
-    const uint32_t vi = uint32_t(mesh.vertices.size());
-    mesh.vertices.push_back({p3.X(), p3.Y(), p3.Z()});
-    mesh.anchors.push_back({faceId, p.X(), p.Y()});
-    tris[size_t(hit)] = {vi, tri[0], tri[1]};
-    tris.push_back({vi, tri[1], tri[2]});
-    tris.push_back({vi, tri[2], tri[0]});
 }
 
 void emitUvTris(PolyMesh& mesh, int faceId, bool flip,
